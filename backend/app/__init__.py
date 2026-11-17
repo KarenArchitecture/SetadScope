@@ -1,0 +1,1 @@
+"""SetadScope API application."""
