@@ -5,6 +5,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import requests
 
@@ -16,7 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 
-def fetch_page(page: int = 0, rows: int = 30) -> dict:
+def fetch_page(page: int = 0, rows: int = 30) -> dict[str, Any]:
     """Fetch one public main-estate listing page and return its JSON response."""
     session = requests.Session()
     session.headers.update(
@@ -27,8 +28,7 @@ def fetch_page(page: int = 0, rows: int = 30) -> dict:
         }
     )
 
-    # Establish a normal site session before requesting the listing endpoint.
-    landing = session.get(LANDING_URL, timeout=30)
+    landing = session.get(LANDING_URL, timeout=(15, 45))
     landing.raise_for_status()
 
     now_ms = int(time.time() * 1000)
@@ -42,7 +42,7 @@ def fetch_page(page: int = 0, rows: int = 30) -> dict:
         "_": now_ms,
     }
 
-    response = session.get(ENDPOINT, params=params, timeout=45)
+    response = session.get(ENDPOINT, params=params, timeout=(15, 60))
     response.raise_for_status()
 
     try:
@@ -59,6 +59,32 @@ def fetch_page(page: int = 0, rows: int = 30) -> dict:
         raise RuntimeError("JSON response does not contain the expected 'gridModel' array.")
 
     return payload
+
+
+def get_record_details(record: dict[str, Any]) -> dict[str, Any]:
+    """Read the known nested auctionParty schema without assuming all fields exist."""
+    party = record.get("auctionParty") or {}
+    auction = party.get("auction") or {}
+    auctioneer = auction.get("auctioneer") or {}
+    visit_city = party.get("visitCity") or {}
+    province = (visit_city.get("province") or {}).get("name")
+
+    return {
+        "title": auction.get("title") or party.get("title") or record.get("title"),
+        "auction_id": auction.get("id"),
+        "auction_no": auction.get("auctionNo"),
+        "auction_reference_no": auction.get("auctionReferenceNo"),
+        "organization": auctioneer.get("name"),
+        "province": province,
+        "city": visit_city.get("name"),
+        "party_id": party.get("id"),
+        "party_no": party.get("partyNo"),
+        "base_total_price": party.get("baseTotalPrice"),
+        "trust_amount": party.get("trustAmount"),
+        "state": auction.get("state") or party.get("state"),
+        "proposal_start": auction.get("fromProposalDate"),
+        "proposal_deadline": auction.get("toProposalDate"),
+    }
 
 
 def main() -> int:
@@ -79,27 +105,17 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    records = payload.get("records")
-    total_pages = payload.get("total")
     items = payload["gridModel"]
-
     print("FETCH SUCCESS")
     print(f"Saved: {output_path.relative_to(PROJECT_ROOT)}")
     print(f"Page requested: {page}; page reported by server: {payload.get('page')}")
     print(f"Rows returned: {len(items)}")
-    print(f"Total records reported: {records}")
-    print(f"Total pages reported: {total_pages}")
+    print(f"Total records reported: {payload.get('records')}")
+    print(f"Total pages reported: {payload.get('total')}")
 
     if items:
-        first = items[0]
-        auction = first.get("auction") or first.get("immovableAuction") or {}
-        auctioneer = auction.get("auctioneer") or {}
-        print("\nFirst record preview:")
-        print(f"  Auction title: {auction.get('title')}")
-        print(f"  Auction number: {auction.get('auctionNo')}")
-        print(f"  Organization: {auctioneer.get('name')}")
-        print(f"  Address: {first.get('address')}")
-        print(f"  Base price field: {first.get('organizationBasePrice')}")
+        print("\nFirst record preview (mapped fields):")
+        print(json.dumps(get_record_details(items[0]), ensure_ascii=False, indent=2))
 
     return 0
 
