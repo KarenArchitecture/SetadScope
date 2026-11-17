@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "setad-scope"
+version = "0.1.0"
+description = "Public auction and tender data collection and analytics"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.32,<3.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
