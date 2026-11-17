@@ -100,13 +100,13 @@ def get_record_details(record: dict[str, Any]) -> dict[str, Any]:
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Fetch Setad main-estate listing pages.")
-    parser.add_argument("--start-page", type=int, default=0, help="First zero-based page (default: 0).")
-    parser.add_argument("--end-page", type=int, default=2, help="Last zero-based page, inclusive (default: 2).")
+    parser.add_argument("--start-page", type=int, default=1, help="First page (the site uses 1-based pagination; default: 1).")
+    parser.add_argument("--end-page", type=int, default=3, help="Last page, inclusive (default: 3).")
     parser.add_argument("--rows", type=int, default=30, help="Rows per page (default: 30).")
     parser.add_argument("--delay", type=float, default=2.0, help="Delay between page requests in seconds (default: 2).")
     args = parser.parse_args()
 
-    if args.start_page < 0 or args.end_page < args.start_page:
+    if args.start_page < 1 or args.end_page < args.start_page:
         parser.error("Page range must be non-negative and end-page must be >= start-page.")
     if args.rows < 1 or args.delay < 0:
         parser.error("Rows must be positive and delay cannot be negative.")
@@ -179,7 +179,7 @@ def main() -> int:
         "total_rows_saved": total_rows_saved,
         "unique_record_keys_across_run": len(seen_keys),
         "pages": page_summaries,
-        "note": "Raw page responses are preserved unchanged. Counts and keys are preliminary diagnostics.",
+        "note": "The source uses 1-based page numbering. Raw page responses are preserved unchanged; counts and keys are preliminary diagnostics.",
     }
     summary_path.write_text(
         json.dumps(run_summary, ensure_ascii=False, indent=2),
