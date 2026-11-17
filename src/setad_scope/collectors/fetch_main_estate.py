@@ -134,14 +134,16 @@ def main() -> int:
             )
 
             page_keys: list[str] = []
+            duplicate_count = 0
             for item in items:
                 details = get_record_details(item)
                 key = details.get("party_id") or details.get("party_no") or details.get("auction_no")
                 if key is not None:
-                    page_keys.append(str(key))
+                    normalized_key = str(key)
+                    if normalized_key in seen_keys or normalized_key in page_keys:
+                        duplicate_count += 1
+                    page_keys.append(normalized_key)
 
-            new_keys = [key for key in page_keys if key not in seen_keys]
-            duplicate_count = len(page_keys) - len(set(page_keys)) + len(page_keys) - len(new_keys)
             seen_keys.update(page_keys)
             total_rows_saved += len(items)
 
