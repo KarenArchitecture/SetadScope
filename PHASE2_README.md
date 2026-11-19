@@ -8,8 +8,8 @@ Backend remains FastAPI. PostgreSQL runs in Docker Compose, with SQLAlchemy and 
 2. Copy `.env.example` to `.env`; set the same secure password in `POSTGRES_PASSWORD` and `DATABASE_URL`.
 3. From the repository root: `docker compose up -d --build`.
 4. Open `http://localhost:8000/api/health` and `http://localhost:8000/docs`.
-5. Use the existing collector to fetch data into `data/raw/`, then import: `docker compose exec api python -m app.jobs`.
-6. For frontend: `cd frontend`, `npm install`, `npm run dev`.
+5. Collect up to three test pages using the existing collector: `docker compose exec api python -m setad_scope.collectors.fetch_main_estate --start-page 1 --end-page 3`.\n6. Import newly collected JSON: `docker compose exec api python -m app.jobs`.
+7. For frontend: `cd frontend`, `npm install`, `npm run dev`.
 
 ## API
 
