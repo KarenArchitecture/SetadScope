@@ -32,6 +32,8 @@ def to_datetime(value: object) -> datetime | None:
                 return datetime.fromtimestamp(int(match.group(1)) / 1000, tz=timezone.utc)
         try:
             result = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if not 2000 <= result.year <= 2100:
+                return None  # Do not interpret Jalali calendar dates as Gregorian.
             return result.replace(tzinfo=TEHRAN) if result.tzinfo is None else result
         except ValueError:
             return None
