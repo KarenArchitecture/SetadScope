@@ -50,3 +50,12 @@ jobs:
         run: |
           cp .env.example .env
           docker compose config -q
+
+  docker-images:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build backend image
+        run: docker build --pull -f backend/Dockerfile -t setadscope-backend:test .
+      - name: Build frontend image
+        run: docker build --pull -f frontend/Dockerfile -t setadscope-frontend:test ./frontend

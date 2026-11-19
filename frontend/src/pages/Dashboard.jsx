@@ -232,7 +232,7 @@ export default function Dashboard() {
           </section>
 
           <section className="stats-grid">
-            <StatCard icon={Gavel} label="رکوردهای در دسترس API" value={result.total} hint="بر اساس فایل‌های JSON فعلی" />
+            <StatCard icon={Gavel} label="رکوردهای در دسترس API" value={result.total} hint="بر اساس آگهی‌های ذخیره‌شده در PostgreSQL" />
             <StatCard icon={MapPin} label="استان در این صفحه" value={provinceCount} hint="تعداد استان‌های صفحه جاری" tone="violet" />
             <StatCard icon={Building2} label="سازمان در این صفحه" value={organizationCount} hint="تعداد سازمان‌های صفحه جاری" tone="teal" />
             <StatCard icon={CheckCircle2} label="وضعیت منتشرشده در صفحه" value={publishedCount} hint="از ۲۰ رکورد قابل نمایش" tone="amber" />
