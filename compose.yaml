@@ -13,7 +13,9 @@ services:
       interval: 5s
       timeout: 5s
       retries: 15
+
   api:
+    image: setadscope-backend:local
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -32,5 +34,55 @@ services:
         "-c",
         "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
       ]
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+  frontend:
+    image: setadscope-frontend:local
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    environment:
+      VITE_HOST: "0.0.0.0"
+      API_PROXY_TARGET: "http://api:8000"
+    ports:
+      - "127.0.0.1:5173:5173"
+    depends_on:
+      api:
+        condition: service_healthy
+
+  collector:
+    image: setadscope-backend:local
+    profiles: ["jobs"]
+    entrypoint: ["python", "-m", "setad_scope.collectors.fetch_main_estate"]
+    command: ["--start-page", "1", "--end-page", "3"]
+    volumes:
+      - ./data:/workspace/data
+    restart: "no"
+
+  ingest:
+    image: setadscope-backend:local
+    profiles: ["jobs"]
+    env_file: .env
+    entrypoint: ["python", "-m", "app.jobs"]
+    command: []
+    volumes:
+      - ./data:/workspace/data
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
 volumes:
   postgres_data:

@@ -1,22 +1,77 @@
 # SetadScope
 
-SetadScope is a data collection and analytics project for monitoring public tenders and auctions published on the Setad Iran platform.
+SetadScope collects public auction and tender listings from Setad, stores normalized records in PostgreSQL, and presents searchable data through a React dashboard.
 
-## Initial goals
+## Runtime architecture
 
-- Collect tender and auction records from the public-facing platform.
-- Normalize and store records in a database.
-- Track changes and support daily or weekly reporting.
-- Produce searchable tables, exports, and analytical charts.
-- Add AI-assisted interpretation only after the underlying data pipeline is reliable.
+All runtime components are managed by Docker Compose:
 
-## Development principles
+| Service | Technology | Container port | Host access |
+| --- | --- | ---: | --- |
+| `frontend` | React + Vite | 5173 | `http://localhost:5173` |
+| `api` | FastAPI | 8000 | `http://localhost:18080` |
+| `db` | PostgreSQL 17 | 5432 | Internal Docker network only |
+| `collector` | Python one-shot job | — | Started by the project script |
+| `ingest` | Python one-shot job | — | Started by the project script |
 
-- Start with a small, testable data pipeline.
-- Keep website access, parsing, storage, and analytics separated.
-- Never commit credentials, session cookies, API keys, or local environment files.
-- Respect the platform's access rules and rate limits.
+The frontend's Vite proxy calls `http://api:8000` over the private Compose network. The API connects to PostgreSQL at `db:5432`. Only the frontend and API are published to the host, bound to localhost. PostgreSQL is not exposed on a host port.
 
-## Project status
+The collector and importer are short-lived job containers based on the backend image. They are not started by the normal `start` command.
 
-Early setup — architecture and data-source behavior are being validated.
+## First-time setup (Windows / PowerShell)
+
+1. Install and start Docker Desktop with the Linux container engine.
+2. Clone the repository and check out `feature/postgres-keyword-pipeline` (or the branch containing this setup).
+3. Copy `.env.example` to `.env`.
+4. Set a strong password in both `POSTGRES_PASSWORD` and the password portion of `DATABASE_URL`. For this simple URL format, use letters, numbers, hyphens, and underscores; URL-reserved characters such as `@` must be percent-encoded.
+5. Stop any locally running Vite process that is already using port 5173.
+6. From the repository root, run:
+
+```powershell
+.\setad.ps1 start
+```
+
+Open:
+
+- Dashboard: http://localhost:5173
+- API health: http://localhost:18080/api/health
+- API documentation: http://localhost:18080/docs
+
+## Daily commands
+
+Run these from the repository root:
+
+```powershell
+.\setad.ps1 start
+.\setad.ps1 stop
+.\setad.ps1 restart
+.\setad.ps1 rebuild
+.\setad.ps1 status
+.\setad.ps1 logs
+.\setad.ps1 collect
+.\setad.ps1 collect -StartPage 1 -EndPage 5
+```
+
+- `stop` stops containers but preserves the named PostgreSQL volume.
+- `restart` restarts existing containers without rebuilding images.
+- `rebuild` rebuilds images and recreates services after code or dependency changes.
+- `collect` fetches the requested Setad main-estate pages into `data/raw`, then imports only the latest run into PostgreSQL.
+- To re-import every saved raw page snapshot manually: `docker compose run --rm ingest --all`.
+
+If PowerShell blocks script execution, run the current command in a PowerShell session with an appropriate execution policy, for example:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+## Data and credentials
+
+- `.env` contains local credentials and must never be committed.
+- Raw collector snapshots are stored under `data/raw` on the host and mounted into the job/API containers.
+- PostgreSQL data is stored in the named Docker volume `postgres_data`.
+- Do not run `docker compose down -v` unless you intentionally want to delete the database volume and all persisted records.
+- Changing `POSTGRES_PASSWORD` in `.env` does not rotate the password inside an already-initialized PostgreSQL volume. Use SQL `ALTER ROLE` to rotate an existing database password.
+
+## Current data limitations
+
+The current collector covers the public main-estate listing source only. Date formats, document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.
