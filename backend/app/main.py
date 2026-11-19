@@ -23,6 +23,12 @@ ORDER_FIELDS = {
     "first_seen_at": Auction.first_seen_at,
 }
 
+def excel_safe(value):
+    """Prevent untrusted Setad strings being interpreted as spreadsheet formulas."""
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
 def auction_to_dict(a: Auction) -> dict:
     return {
         "id": a.id, "source_party_id": a.source_party_id,
@@ -107,11 +113,11 @@ def export_auctions(
     for a in db.scalars(query).yield_per(500):
         sheet.append([
             a.source_party_id, a.title, a.description, ", ".join(a.matched_keywords or []),
-            a.organization, a.province, a.city, str(a.proposal_start or ""),
+            excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city), str(a.proposal_start or ""),
             str(a.proposal_deadline), str(a.document_deadline or ""),
             float(a.base_total_price) if a.base_total_price is not None else None,
             float(a.total_volume_m3) if a.total_volume_m3 is not None else None,
-            a.auction_no, a.source_url,
+            excel_safe(a.auction_no), excel_safe(a.source_url),
         ])
     data = BytesIO()
     workbook.save(data)
