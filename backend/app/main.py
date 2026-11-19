@@ -6,21 +6,21 @@ from typing import Literal
 from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
-from sqlalchemy import func, or_, select
+from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 from app.db.models import Auction
 from app.db.session import get_db
 
 app = FastAPI(title="SetadScope API", version="0.2.0")
 ORDER_FIELDS = {
-    "title": Auction.title, "organization": Auction.organization,
+    "source_party_id": Auction.source_party_id, "auction_no": Auction.auction_no,\n    "auction_reference_no": Auction.auction_reference_no,\n    "title": Auction.title, "description": Auction.description,\n    "matched_keywords": cast(Auction.matched_keywords, String),\n    "state": Auction.state, "organization": Auction.organization,
     "province": Auction.province, "city": Auction.city,
-    "base_total_price": Auction.base_total_price,
+    "base_total_price": Auction.base_total_price, "trust_amount": Auction.trust_amount,\n    "money_unit": Auction.money_unit,
     "proposal_start": Auction.proposal_start,
     "proposal_deadline": Auction.proposal_deadline,
     "document_deadline": Auction.document_deadline,
     "total_volume_m3": Auction.total_volume_m3,
-    "first_seen_at": Auction.first_seen_at,
+    "first_seen_at": Auction.first_seen_at, "updated_at": Auction.updated_at,
 }
 
 def excel_safe(value):
