@@ -12,18 +12,20 @@ from pathlib import Path
 from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from pydantic import BaseModel
 from fastapi.responses import StreamingResponse
-from openpyxl import Workbook
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Auction
+from app.db.models import Auction, AppSetting
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
 from app.services.auction_ingestion import AUCTION_CATEGORIES, import_auction_pages
 from app.auction_category_jobs import latest_category_files
 from app.services.date_normalization import parse_filter_bound
+from app.services.excel_export import build_excel
+from app.services.keyword_settings import SETTING_KEY, configured_keywords, validate_keywords
 from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
 from app.tender_jobs import latest_tender_run_files
 from app.tender_api import router as tenders_router
@@ -428,6 +430,32 @@ def auction_filter_options(db: Session, category: str) -> dict[str, list]:
         "states": list(states),
     }
 
+
+class KeywordSettingsPayload(BaseModel):
+    keywords: list[str]
+
+
+@app.get("/api/settings/keywords")
+def get_keyword_settings(db: Session = Depends(get_db)):
+    return {"keywords": list(configured_keywords(db))}
+
+
+@app.put("/api/settings/keywords")
+def put_keyword_settings(payload: KeywordSettingsPayload, db: Session = Depends(get_db)):
+    try:
+        words = validate_keywords(payload.keywords)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    setting = db.get(AppSetting, SETTING_KEY)
+    if setting is None:
+        setting = AppSetting(key=SETTING_KEY, value={"keywords": words})
+        db.add(setting)
+    else:
+        setting.value = {"keywords": words}
+    db.commit()
+    return {"keywords": words}
+
+
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
     try:
@@ -577,36 +605,33 @@ def export_auctions(
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
-    workbook = Workbook(write_only=True)
-    sheet = workbook.create_sheet("SetadScope")
-    sheet.append(
-        [
-            "شناسه", "دسته", "عنوان", "عنوان مورد", "نوع قیمت", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
-            "تاریخ اعلام در سایت", "شروع پیشنهاد", "مهلت پیشنهاد", "مهلت دریافت اسناد",
-            "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
-            "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
-        ]
-    )
     query = query.order_by(ordering, Auction.id.asc())
-    for a in db.scalars(query).yield_per(500):
-        sheet.append(
-            [
-                excel_safe(a.source_party_id), a.category,
-                excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
-                excel_safe(a.description), ", ".join(a.matched_keywords or []),
-                excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
-                str(a.site_show_start_at or a.publish_start_at or ""),
-                str(a.proposal_start or ""), str(a.proposal_deadline or ""),
-                str(a.document_deadline or ""),
-                str(a.base_total_price) if a.base_total_price is not None else None,
-                str(a.trust_amount) if a.trust_amount is not None else None,
-                str(a.winner_announce_at or ""), str(a.opening_at or ""),
-                excel_safe(a.auction_no), excel_safe(a.source_url),
-            ]
-        )
-    data = BytesIO()
-    workbook.save(data)
-    data.seek(0)
+    headers = [
+        "شناسه", "دسته", "عنوان", "عنوان مورد", "نوع قیمت", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
+        "تاریخ اعلام در سایت", "شروع پیشنهاد", "مهلت پیشنهاد", "مهلت دریافت اسناد",
+        "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
+        "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
+    ]
+    rows = (
+        [
+            excel_safe(a.source_party_id), a.category,
+            excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
+            excel_safe(a.description), ", ".join(a.matched_keywords or []),
+            excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
+            str(a.site_show_start_at or a.publish_start_at or ""),
+            str(a.proposal_start or ""), str(a.proposal_deadline or ""),
+            str(a.document_deadline or ""),
+            a.base_total_price, a.trust_amount,
+            str(a.winner_announce_at or ""), str(a.opening_at or ""),
+            excel_safe(a.auction_no), excel_safe(a.source_url),
+        ]
+        for a in db.scalars(query).yield_per(500)
+    )
+    data = build_excel(
+        "مزایده‌ها", "SetadScopeAuctions", headers, rows,
+        widths=[23, 17, 52, 44, 22, 65, 32, 38, 20, 20, 25, 25, 25, 25, 27, 27, 25, 25, 22, 52],
+        numeric_columns=(15, 16),
+    )
     return StreamingResponse(
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
