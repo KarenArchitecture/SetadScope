@@ -29,3 +29,13 @@ export async function getApiHealth() {
   const response = await api.get("/api/health");
   return response.data;
 }
+
+export async function startCollection() {
+  const response = await api.post("/api/collection/run");
+  return response.data;
+}
+
+export async function getCollectionStatus() {
+  const response = await api.get("/api/collection/status");
+  return response.data;
+}

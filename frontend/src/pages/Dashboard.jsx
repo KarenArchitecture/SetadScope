@@ -2,9 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertCircle,
-  ArrowDown,
   ArrowLeft,
-  ArrowUp,
   Building2,
   CalendarDays,
   CheckCircle2,
@@ -16,14 +14,21 @@ import {
   Gavel,
   LoaderCircle,
   MapPin,
-  RefreshCw,
+  Play,
   Search,
   X,
 } from "lucide-react";
-import { getAuctionById, getAuctions, getApiHealth } from "../services/api";
+import {
+  getAuctionById,
+  getAuctions,
+  getApiHealth,
+  getCollectionStatus,
+  startCollection,
+} from "../services/api";
 import "./Dashboard.css";
 
 const PAGE_SIZE = 20;
+const COLLECTION_ACTIVE_STATES = new Set(["collecting", "importing"]);
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -120,6 +125,7 @@ export default function Dashboard() {
   const [apiOnline, setApiOnline] = useState(false);
   const [selectedAuction, setSelectedAuction] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const [collectionState, setCollectionState] = useState({ status: "idle" });
 
   async function loadPage(nextPage = page, nextSearch = search) {
     setLoading(true);
@@ -138,7 +144,38 @@ export default function Dashboard() {
   useEffect(() => {
     loadPage(1, "");
     getApiHealth().then(() => setApiOnline(true)).catch(() => setApiOnline(false));
+    getCollectionStatus().then(setCollectionState).catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!COLLECTION_ACTIVE_STATES.has(collectionState.status)) return undefined;
+
+    let cancelled = false;
+    const pollStatus = async () => {
+      try {
+        const status = await getCollectionStatus();
+        if (cancelled) return;
+        setCollectionState(status);
+
+        if (status.status === "completed") {
+          const data = await getAuctions({ search, page: 1, pageSize: PAGE_SIZE });
+          if (!cancelled) {
+            setResult(data);
+            setPage(1);
+          }
+        }
+      } catch {
+        if (!cancelled) setError("دریافت وضعیت اجرای Collector ناموفق بود.");
+      }
+    };
+
+    const timer = window.setInterval(pollStatus, 1800);
+    pollStatus();
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [collectionState.status, search]);
 
   const visibleRange = useMemo(() => {
     if (!result.total) return "۰";
@@ -150,12 +187,26 @@ export default function Dashboard() {
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
   const publishedCount = result.items.filter((item) => item.state === "PUBLISHED").length;
+  const collectionRunning = COLLECTION_ACTIVE_STATES.has(collectionState.status);
 
   async function handleSearch(event) {
     event.preventDefault();
     const nextSearch = searchInput.trim();
     setSearch(nextSearch);
     await loadPage(1, nextSearch);
+  }
+
+  async function handleCollection() {
+    setError("");
+    try {
+      const status = await startCollection();
+      setCollectionState(status);
+    } catch (requestError) {
+      setError(
+        requestError.response?.data?.detail ||
+          "شروع جمع‌آوری اطلاعات ناموفق بود. وضعیت Backend را بررسی کن.",
+      );
+    }
   }
 
   async function openDetails(id) {
@@ -169,6 +220,18 @@ export default function Dashboard() {
     } finally {
       setDetailLoading(false);
     }
+  }
+
+  let collectionMessage = "";
+  if (collectionState.status === "collecting") {
+    collectionMessage = "در حال دریافت صفحات ستاد...";
+  } else if (collectionState.status === "importing") {
+    collectionMessage = "دریافت تمام شد؛ در حال فیلتر و ذخیره اطلاعات...";
+  } else if (collectionState.status === "completed" && collectionState.totals) {
+    const totals = collectionState.totals;
+    collectionMessage = `موفق: ${formatNumber(totals.fetched)} دریافت، ${formatNumber(totals.stored)} ذخیره`;
+  } else if (collectionState.status === "failed") {
+    collectionMessage = collectionState.error || "اجرای جمع‌آوری ناموفق بود.";
   }
 
   return (
@@ -218,9 +281,24 @@ export default function Dashboard() {
               <h1>نمای کلی</h1>
               <p>وضعیت داده‌های جمع‌آوری‌شده از سامانه ستاد</p>
             </div>
-            <button className="button button--secondary" onClick={() => loadPage(page, search)} disabled={loading}>
-              <RefreshCw size={16} className={loading ? "spin" : ""} /> بروزرسانی
-            </button>
+            <div className="page-heading__actions">
+              <button
+                className="button button--primary"
+                onClick={handleCollection}
+                disabled={collectionRunning}
+              >
+                {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
+                {collectionRunning ? "در حال اجرا..." : "اجرای جمع‌آوری"}
+              </button>
+              {collectionMessage && (
+                <span
+                  className={`collection-feedback ${collectionState.status === "failed" ? "collection-feedback--error" : ""}`}
+                  title={collectionState.status === "failed" ? collectionMessage : undefined}
+                >
+                  {collectionMessage}
+                </span>
+              )}
+            </div>
           </section>
 
           <section className="notice-banner">

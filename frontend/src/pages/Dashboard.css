@@ -270,3 +270,25 @@
   .table-footer, .dashboard-footer { align-items: flex-start; flex-direction: column; }
   .detail-grid { grid-template-columns: 1fr; }
 }
+
+
+.page-heading__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 7px;
+}
+.collection-feedback {
+  max-width: 360px;
+  color: #21805e;
+  font-size: 10px;
+  line-height: 1.6;
+  text-align: left;
+}
+.collection-feedback--error {
+  color: #a34141;
+}
+@media (max-width: 720px) {
+  .page-heading__actions { align-items: flex-end; }
+  .collection-feedback { max-width: 210px; }
+}

@@ -1,18 +1,25 @@
 from __future__ import annotations
+import os
+import subprocess
+import sys
+import threading
 from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 from typing import Literal
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from openpyxl import Workbook
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Auction
-from app.db.session import get_db
+from app.db.session import SessionLocal, get_db
+from app.jobs import latest_run_files
+from app.services.ingestion import RAW_DIR, import_pages
 
-app = FastAPI(title="SetadScope API", version="0.3.0")
+app = FastAPI(title="SetadScope API", version="0.4.0")
 
 ORDER_FIELDS = {
     "source_party_id": Auction.source_party_id,
@@ -35,6 +42,95 @@ ORDER_FIELDS = {
     "first_seen_at": Auction.first_seen_at,
     "updated_at": Auction.updated_at,
 }
+
+COLLECTION_START_PAGE = 1
+COLLECTION_END_PAGE = 37
+collection_lock = threading.Lock()
+collection_state = {
+    "status": "idle",
+    "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
+    "started_at": None,
+    "finished_at": None,
+    "totals": None,
+    "error": None,
+    "output": None,
+}
+
+
+def update_collection_state(**values) -> None:
+    with collection_lock:
+        collection_state.update(values)
+
+
+def run_collection_job() -> None:
+    started_at = datetime.now(timezone.utc).isoformat()
+    update_collection_state(
+        status="collecting",
+        message=f"در حال دریافت صفحات {COLLECTION_START_PAGE} تا {COLLECTION_END_PAGE} از ستاد...",
+        started_at=started_at,
+        finished_at=None,
+        totals=None,
+        error=None,
+        output=None,
+    )
+    try:
+        project_root = Path(__file__).resolve().parents[2]
+        env = os.environ.copy()
+        python_paths = [
+            str(project_root / "backend"),
+            str(project_root / "src"),
+            env.get("PYTHONPATH", ""),
+        ]
+        env["PYTHONPATH"] = os.pathsep.join(value for value in python_paths if value)
+
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "setad_scope.collectors.fetch_main_estate",
+                "--start-page",
+                str(COLLECTION_START_PAGE),
+                "--end-page",
+                str(COLLECTION_END_PAGE),
+            ],
+            cwd=project_root,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=1800,
+            check=False,
+        )
+        output = (result.stdout or "")[-5000:]
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout or "Collector failed.")[-3000:]
+            raise RuntimeError(detail)
+
+        update_collection_state(
+            status="importing",
+            message="دریافت صفحات تمام شد؛ در حال فیلتر کلیدواژه‌ها و ذخیره در PostgreSQL...",
+            output=output,
+        )
+        files = latest_run_files(RAW_DIR)
+        if not files:
+            raise RuntimeError("Collector completed but no raw page files were found.")
+
+        with SessionLocal() as session:
+            totals = import_pages(session, files)
+
+        update_collection_state(
+            status="completed",
+            message="جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد.",
+            totals=totals,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            output=output,
+        )
+    except Exception as exc:
+        update_collection_state(
+            status="failed",
+            message="اجرای جمع‌آوری با خطا مواجه شد.",
+            error=str(exc)[-3000:],
+            finished_at=datetime.now(timezone.utc).isoformat(),
+        )
 
 
 def excel_safe(value):
@@ -98,6 +194,35 @@ def health(db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Database unavailable") from exc
     return {"status": "ok", "database": "ok"}
+
+
+@app.get("/api/collection/status")
+def get_collection_status():
+    with collection_lock:
+        return dict(collection_state)
+
+
+@app.post("/api/collection/run", status_code=202)
+def start_collection(background_tasks: BackgroundTasks):
+    with collection_lock:
+        if collection_state["status"] in {"collecting", "importing"}:
+            raise HTTPException(
+                status_code=409,
+                detail="A collection job is already running.",
+            )
+        collection_state.update(
+            {
+                "status": "collecting",
+                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "finished_at": None,
+                "totals": None,
+                "error": None,
+                "output": None,
+            }
+        )
+    background_tasks.add_task(run_collection_job)
+    return get_collection_status()
 
 
 @app.get("/api/auctions")
