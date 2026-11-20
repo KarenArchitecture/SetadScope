@@ -5,6 +5,7 @@ on:
     branches:
       - master
       - feature/postgres-keyword-pipeline
+      - UI-UX-improvement
   pull_request:
     branches:
       - master
