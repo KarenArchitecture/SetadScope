@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
-  AlertCircle,
   ArrowDownToLine,
+  ChevronDown,
   Building2,
   CalendarDays,
   CheckCircle2,
@@ -12,6 +12,7 @@ import {
   FileText,
   Filter,
   Gavel,
+  Info,
   LoaderCircle,
   MapPin,
   Play,
@@ -28,6 +29,7 @@ import {
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
+import JalaliDatePicker from "../components/JalaliDatePicker";
 import "./Dashboard.css";
 
 const PAGE_SIZE = 20;
@@ -67,8 +69,22 @@ function formatDate(value) {
   }).format(parsed);
 }
 
+function formatRawDate(value) {
+  if (!value) return "—";
+  const raw = String(value).trim();
+  const jalali = raw.match(/^(\d{4})[/-](\d{1,2})[/-](\d{1,2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (jalali && Number(jalali[1]) >= 1200 && Number(jalali[1]) <= 1600) {
+    const digits = new Intl.NumberFormat("fa-IR", { useGrouping: false });
+    const pad = (part) => digits.format(Number(part)).padStart(2, "۰");
+    const date = pad(jalali[1]) + "/" + pad(jalali[2]) + "/" + pad(jalali[3]);
+    return jalali[4] ? date + "، " + pad(jalali[4]) + ":" + pad(jalali[5]) : date;
+  }
+  const parsed = new Date(raw);
+  return Number.isNaN(parsed.getTime()) ? raw : formatDate(parsed.toISOString());
+}
+
 function displayDate(parsedValue, rawValue) {
-  return parsedValue ? formatDate(parsedValue) : (rawValue || "—");
+  return parsedValue ? formatDate(parsedValue) : formatRawDate(rawValue);
 }
 
 function remainingTime(value) {
@@ -184,7 +200,17 @@ function FilterField({ label, children, wide = false }) {
   );
 }
 
-function FiltersPanel({ kind, filters, options, onChange, onApply, onReset }) {
+function FiltersPanel({
+  kind,
+  filters,
+  options,
+  onChange,
+  onApply,
+  onReset,
+  isOpen,
+  onToggle,
+  activeCount,
+}) {
   const isTender = kind === "tenders";
   const provinceOptions = options.provinces || [];
   const cityOptions = (options.cities || [])
@@ -194,133 +220,187 @@ function FiltersPanel({ kind, filters, options, onChange, onApply, onReset }) {
   const typeOptions = options.types || [];
 
   return (
-    <section className="filters-panel">
-      <div className="filters-panel__header">
-        <div>
-          <span className="eyebrow"><Filter size={13} /> جست‌وجوی دقیق‌تر</span>
-          <h2>فیلترهای پیشرفته</h2>
-        </div>
-        <button type="button" className="filters-reset" onClick={onReset}>
-          <RotateCcw size={14} /> پاک کردن فیلترها
+    <section className={"filters-panel " + (isOpen ? "filters-panel--open" : "")}>
+      <header className="filters-panel__header">
+        <button
+          type="button"
+          className="filters-panel__toggle"
+          onClick={onToggle}
+          aria-expanded={isOpen}
+        >
+          <span className="filters-panel__toggle-main">
+            <span className="filters-panel__toggle-icon"><Filter size={16} /></span>
+            <span className="filters-panel__toggle-copy">
+              <strong>فیلترهای پیشرفته</strong>
+              <small>
+                {activeCount
+                  ? toPersianDigits(activeCount) + " فیلتر فعال"
+                  : "استان، شهر، وضعیت و بازه‌های زمانی"}
+              </small>
+            </span>
+          </span>
+          <span className="filters-panel__toggle-action">
+            {isOpen ? "بستن فیلترها" : "نمایش فیلترها"}
+            <ChevronDown className={isOpen ? "filters-panel__chevron filters-panel__chevron--open" : "filters-panel__chevron"} size={17} />
+          </span>
         </button>
-      </div>
-
-      <div className="filters-grid">
-        <FilterField label="استان">
-          <select value={filters.province} onChange={(event) => onChange("province", event.target.value)}>
-            <option value="">همه استان‌ها</option>
-            {provinceOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </FilterField>
-
-        <FilterField label="شهر">
-          <select
-            value={filters.city}
-            disabled={!filters.province}
-            onChange={(event) => onChange("city", event.target.value)}
-          >
-            <option value="">{filters.province ? "همه شهرهای استان" : "ابتدا استان را انتخاب کنید"}</option>
-            {cityOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </FilterField>
-
-        <FilterField label="وضعیت آگهی">
-          <select value={filters.state} onChange={(event) => onChange("state", event.target.value)}>
-            <option value="">همه وضعیت‌ها</option>
-            {stateOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-        </FilterField>
-
-        {isTender ? (
-          <FilterField label="نوع فراخوان">
-            <select value={filters.type_name} onChange={(event) => onChange("type_name", event.target.value)}>
-              <option value="">همه انواع</option>
-              {typeOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-            </select>
-          </FilterField>
-        ) : (
-          <>
-            <FilterField label="حداقل مبلغ پایه">
-              <input
-                type="number"
-                min="0"
-                step="any"
-                inputMode="decimal"
-                placeholder="از مبلغ"
-                value={filters.price_min}
-                onChange={(event) => onChange("price_min", event.target.value)}
-              />
-            </FilterField>
-            <FilterField label="حداکثر مبلغ پایه">
-              <input
-                type="number"
-                min="0"
-                step="any"
-                inputMode="decimal"
-                placeholder="تا مبلغ"
-                value={filters.price_max}
-                onChange={(event) => onChange("price_max", event.target.value)}
-              />
-            </FilterField>
-          </>
+        {activeCount > 0 && (
+          <button type="button" className="filters-reset" onClick={onReset}>
+            <RotateCcw size={13} /> پاک کردن
+          </button>
         )}
+      </header>
 
-        <div className="filter-date-group">
-          <div className="filter-date-group__title">
-            <CalendarDays size={14} />
-            {isTender ? "بازه تاریخ اعلام مناقصه" : "بازه تاریخ اعلام / نمایش مزایده"}
-          </div>
-          <div className="filter-date-group__inputs">
-            <FilterField label="از تاریخ">
-              <input type="date" value={filters.announcement_from} onChange={(event) => onChange("announcement_from", event.target.value)} />
-            </FilterField>
-            <FilterField label="تا تاریخ">
-              <input type="date" value={filters.announcement_to} onChange={(event) => onChange("announcement_to", event.target.value)} />
-            </FilterField>
-          </div>
-        </div>
-
-        <div className="filter-date-group">
-          <div className="filter-date-group__title">
-            <CalendarDays size={14} />
-            بازه مهلت پیشنهاد
-          </div>
-          <div className="filter-date-group__inputs">
-            <FilterField label="از تاریخ">
-              <input type="date" value={filters.deadline_from} onChange={(event) => onChange("deadline_from", event.target.value)} />
-            </FilterField>
-            <FilterField label="تا تاریخ">
-              <input type="date" value={filters.deadline_to} onChange={(event) => onChange("deadline_to", event.target.value)} />
-            </FilterField>
-          </div>
-        </div>
-
-        {isTender && (
-          <div className="filter-date-group">
-            <div className="filter-date-group__title">
-              <CalendarDays size={14} />
-              بازه مهلت دریافت اسناد
-            </div>
-            <div className="filter-date-group__inputs">
-              <FilterField label="از تاریخ">
-                <input type="date" value={filters.documents_deadline_from} onChange={(event) => onChange("documents_deadline_from", event.target.value)} />
+      {isOpen && (
+        <>
+          <div className="filters-panel__body">
+            <div className="filters-grid">
+              <FilterField label="استان">
+                <select value={filters.province} onChange={(event) => onChange("province", event.target.value)}>
+                  <option value="">همه استان‌ها</option>
+                  {provinceOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
               </FilterField>
-              <FilterField label="تا تاریخ">
-                <input type="date" value={filters.documents_deadline_to} onChange={(event) => onChange("documents_deadline_to", event.target.value)} />
+
+              <FilterField label="شهر">
+                <select
+                  value={filters.city}
+                  disabled={!filters.province}
+                  onChange={(event) => onChange("city", event.target.value)}
+                >
+                  <option value="">{filters.province ? "همه شهرهای استان" : "ابتدا استان را انتخاب کنید"}</option>
+                  {cityOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
               </FilterField>
+
+              <FilterField label="وضعیت آگهی">
+                <select value={filters.state} onChange={(event) => onChange("state", event.target.value)}>
+                  <option value="">همه وضعیت‌ها</option>
+                  {stateOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </FilterField>
+
+              {isTender ? (
+                <FilterField label="نوع فراخوان">
+                  <select value={filters.type_name} onChange={(event) => onChange("type_name", event.target.value)}>
+                    <option value="">همه انواع</option>
+                    {typeOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                  </select>
+                </FilterField>
+              ) : (
+                <>
+                  <FilterField label="حداقل مبلغ پایه">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      inputMode="decimal"
+                      placeholder="از مبلغ"
+                      value={filters.price_min}
+                      onChange={(event) => onChange("price_min", event.target.value)}
+                    />
+                  </FilterField>
+                  <FilterField label="حداکثر مبلغ پایه">
+                    <input
+                      type="number"
+                      min="0"
+                      step="any"
+                      inputMode="decimal"
+                      placeholder="تا مبلغ"
+                      value={filters.price_max}
+                      onChange={(event) => onChange("price_max", event.target.value)}
+                    />
+                  </FilterField>
+                </>
+              )}
+
+              <div className="filter-date-group">
+                <div className="filter-date-group__title">
+                  <CalendarDays size={14} />
+                  {isTender ? "بازه تاریخ اعلام مناقصه" : "بازه تاریخ اعلام / نمایش مزایده"}
+                </div>
+                <div className="filter-date-group__inputs">
+                  <FilterField label="از تاریخ">
+                    <JalaliDatePicker
+                      value={filters.announcement_from}
+                      onChange={(value) => onChange("announcement_from", value)}
+                      ariaLabel="از تاریخ اعلام به شمسی"
+                    />
+                  </FilterField>
+                  <FilterField label="تا تاریخ">
+                    <JalaliDatePicker
+                      value={filters.announcement_to}
+                      onChange={(value) => onChange("announcement_to", value)}
+                      ariaLabel="تا تاریخ اعلام به شمسی"
+                    />
+                  </FilterField>
+                </div>
+              </div>
+
+              <div className="filter-date-group">
+                <div className="filter-date-group__title">
+                  <CalendarDays size={14} />
+                  بازه مهلت پیشنهاد
+                </div>
+                <div className="filter-date-group__inputs">
+                  <FilterField label="از تاریخ">
+                    <JalaliDatePicker
+                      value={filters.deadline_from}
+                      onChange={(value) => onChange("deadline_from", value)}
+                      ariaLabel="از تاریخ مهلت پیشنهاد به شمسی"
+                    />
+                  </FilterField>
+                  <FilterField label="تا تاریخ">
+                    <JalaliDatePicker
+                      value={filters.deadline_to}
+                      onChange={(value) => onChange("deadline_to", value)}
+                      ariaLabel="تا تاریخ مهلت پیشنهاد به شمسی"
+                    />
+                  </FilterField>
+                </div>
+              </div>
+
+              {isTender && (
+                <div className="filter-date-group">
+                  <div className="filter-date-group__title">
+                    <CalendarDays size={14} />
+                    بازه مهلت دریافت اسناد
+                  </div>
+                  <div className="filter-date-group__inputs">
+                    <FilterField label="از تاریخ">
+                      <JalaliDatePicker
+                        value={filters.documents_deadline_from}
+                        onChange={(value) => onChange("documents_deadline_from", value)}
+                        ariaLabel="از تاریخ مهلت اسناد به شمسی"
+                      />
+                    </FilterField>
+                    <FilterField label="تا تاریخ">
+                      <JalaliDatePicker
+                        value={filters.documents_deadline_to}
+                        onChange={(value) => onChange("documents_deadline_to", value)}
+                        ariaLabel="تا تاریخ مهلت اسناد به شمسی"
+                      />
+                    </FilterField>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
-        )}
-      </div>
 
-      <div className="filters-panel__footer">
-        <span>فیلترها روی کل آرشیو اعمال می‌شوند، نه فقط رکوردهای صفحه جاری.</span>
-        <button type="button" className="button button--primary" onClick={onApply}>
-          <Filter size={15} /> اعمال فیلترها
-        </button>
-      </div>
+          <div className="filters-panel__footer">
+            <span>فیلترها روی کل آرشیو اعمال می‌شوند، نه فقط رکوردهای صفحه جاری.</span>
+            <button type="button" className="button button--primary" onClick={onApply}>
+              <Filter size={15} /> اعمال فیلترها
+            </button>
+          </div>
+        </>
+      )}
     </section>
   );
+}
+
+function toPersianDigits(value) {
+  return new Intl.NumberFormat("fa-IR").format(value);
 }
 
 function DetailModal({ record, kind, loading, onClose }) {
@@ -442,6 +522,8 @@ export default function Dashboard({ kind, onNavigate }) {
   const [search, setSearch] = useState("");
   const [filterDraft, setFilterDraft] = useState({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
+  const [filtersOpen, setFiltersOpen] = useState(false);
+  const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length;
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
@@ -671,12 +753,14 @@ export default function Dashboard({ kind, onNavigate }) {
     setError("");
     setPage(1);
     setAppliedFilters({ ...filterDraft });
+    setFiltersOpen(false);
   }
 
   function handleResetFilters() {
     setFilterDraft({ ...EMPTY_FILTERS });
     setAppliedFilters({ ...EMPTY_FILTERS });
     setPage(1);
+    setFiltersOpen(false);
   }
 
   function handleSort(key) {
@@ -788,7 +872,17 @@ export default function Dashboard({ kind, onNavigate }) {
           <section className="page-heading">
             <div>
               <span className="eyebrow">مرکز پایش معاملات</span>
-              <h1>{pageTitle}</h1>
+              <div className="page-heading__title-row">
+                <h1>{pageTitle}</h1>
+                <span
+                  className="page-heading__info"
+                  title="تاریخ‌ها در صفحه به تقویم شمسی نمایش داده می‌شوند. مرتب‌سازی و فیلتر بر اساس زمان استاندارد ذخیره‌شده در پایگاه داده انجام می‌شود."
+                  aria-label="راهنمای تاریخ‌ها"
+                  tabIndex={0}
+                >
+                  <Info size={16} />
+                </span>
+              </div>
               <p>
                 {isTender
                   ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
@@ -813,18 +907,6 @@ export default function Dashboard({ kind, onNavigate }) {
           </section>
 
           <CollectionProgress state={collectionState} kind={kind} />
-
-          <section className="notice-banner">
-            <div className="notice-banner__icon"><AlertCircle size={19} /></div>
-            <div>
-              <strong>داده خام با تاریخ استانداردشده</strong>
-              <p>
-                {isTender
-                  ? "تاریخ شمسی اصلی مناقصه حفظ شده و نسخه قابل مقایسه آن برای فیلتر و مرتب‌سازی در پایگاه داده ذخیره می‌شود."
-                  : "تاریخ‌های اعلام، نمایش و مهلت پیشنهاد مزایده از پاسخ خام ستاد استخراج و به زمان قابل مرتب‌سازی تبدیل می‌شوند."}
-              </p>
-            </div>
-          </section>
 
           <section className="stats-grid">
             <StatCard
@@ -867,6 +949,9 @@ export default function Dashboard({ kind, onNavigate }) {
             onChange={handleFilterChange}
             onApply={handleApplyFilters}
             onReset={handleResetFilters}
+            isOpen={filtersOpen}
+            onToggle={() => setFiltersOpen((current) => !current)}
+            activeCount={activeFilterCount}
           />
 
           <ListingTable

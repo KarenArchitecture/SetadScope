@@ -821,3 +821,521 @@
     white-space: normal;
   }
 }
+
+
+/* Compact page heading and unobtrusive date guidance */
+.page-heading__title-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.page-heading__info {
+  width: 25px;
+  height: 25px;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 25px;
+  border: 1px solid #e2e8f0;
+  border-radius: 50%;
+  color: #8292a8;
+  background: #fff;
+  cursor: help;
+  transition: color .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.page-heading__info:hover,
+.page-heading__info:focus-visible {
+  outline: none;
+  color: #315f9f;
+  border-color: #bfd0e5;
+  background: #f5f9ff;
+}
+
+/* Collapsible filter strip */
+.filters-panel {
+  margin: 0 0 15px;
+  padding: 0;
+  overflow: visible;
+  border: 1px solid #e4eaf2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 2px 8px rgba(31, 55, 85, .035);
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+
+.filters-panel--open {
+  border-color: #d7e1ed;
+  box-shadow: 0 5px 18px rgba(31, 55, 85, .055);
+}
+
+.filters-panel__header {
+  min-height: 66px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0;
+  padding: 9px 14px;
+}
+
+.filters-panel__toggle {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 0;
+  border: 0;
+  color: inherit;
+  background: transparent;
+  font: inherit;
+  text-align: right;
+  cursor: pointer;
+}
+
+.filters-panel__toggle-main {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.filters-panel__toggle-icon {
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  flex: 0 0 36px;
+  border: 1px solid #e4ebf4;
+  border-radius: 10px;
+  color: #426d9f;
+  background: #f4f8fd;
+}
+
+.filters-panel__toggle-copy {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.filters-panel__toggle-copy strong {
+  color: #2b3e56;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.filters-panel__toggle-copy small {
+  overflow: hidden;
+  color: #8997a9;
+  font-size: 10px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.filters-panel__toggle-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: 0 0 auto;
+  color: #59718f;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.filters-panel__chevron {
+  color: #8b9bb0;
+  transition: transform .2s ease;
+}
+
+.filters-panel__chevron--open {
+  transform: rotate(180deg);
+}
+
+.filters-reset {
+  min-height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 0 0 auto;
+  padding: 0 9px;
+  border: 1px solid #e8edf3;
+  border-radius: 8px;
+  color: #78879a;
+  background: #fff;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  transition: .16s ease;
+}
+
+.filters-reset:hover {
+  color: #a24b4b;
+  border-color: #f0d9d9;
+  background: #fffafa;
+}
+
+.filters-panel__body {
+  padding: 15px 15px 16px;
+  border-top: 1px solid #edf1f6;
+  background: linear-gradient(180deg, #fcfdff 0%, #fff 100%);
+  border-radius: 0 0 12px 12px;
+}
+
+.filters-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.filter-field {
+  gap: 7px;
+  color: #63758d;
+  font-size: 10px;
+}
+
+.filter-field > span {
+  color: #657790;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.filter-field input,
+.filter-field select {
+  height: 39px;
+  padding-inline: 11px;
+  border-color: #e1e8f0;
+  border-radius: 8px;
+  color: #344961;
+  background: #fff;
+  font-size: 11px;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.filter-field input:hover,
+.filter-field select:hover {
+  border-color: #cbd8e7;
+}
+
+.filter-field input:focus,
+.filter-field select:focus {
+  border-color: #8aadd1;
+  box-shadow: 0 0 0 3px rgba(75, 125, 181, .1);
+}
+
+.filter-date-group {
+  padding: 12px;
+  border-color: #e9eef4;
+  border-radius: 10px;
+  background: #fff;
+}
+
+.filter-date-group__title {
+  margin-bottom: 11px;
+  color: #526b89;
+  font-size: 10px;
+}
+
+.filter-date-group__inputs {
+  gap: 10px;
+}
+
+.filters-panel__footer {
+  margin: 0;
+  padding: 12px 15px;
+  border-top: 1px solid #edf1f6;
+  color: #8c99a9;
+  font-size: 10px;
+}
+
+.filters-panel__footer .button {
+  min-height: 36px;
+  padding-inline: 13px;
+}
+
+/* Persian calendar picker */
+.jalali-date-picker {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.jalali-date-picker__trigger {
+  width: 100%;
+  min-width: 0;
+  height: 39px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px;
+  border: 1px solid #e1e8f0;
+  border-radius: 8px;
+  color: #647b98;
+  background: #fff;
+  font: inherit;
+  font-size: 11px;
+  text-align: right;
+  cursor: pointer;
+  transition: border-color .16s ease, box-shadow .16s ease, background .16s ease;
+}
+
+.jalali-date-picker__trigger:hover {
+  border-color: #cbd8e7;
+  background: #fcfdff;
+}
+
+.jalali-date-picker__trigger--open {
+  border-color: #8aadd1;
+  box-shadow: 0 0 0 3px rgba(75, 125, 181, .1);
+}
+
+.jalali-date-picker__trigger > svg:first-child {
+  flex: 0 0 auto;
+  color: #8298b3;
+}
+
+.jalali-date-picker__value,
+.jalali-date-picker__placeholder {
+  min-width: 0;
+  flex: 1;
+  direction: ltr;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.jalali-date-picker__value {
+  color: #334c68;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.jalali-date-picker__placeholder {
+  color: #9aa7b7;
+  font-weight: 500;
+}
+
+.jalali-date-picker__trigger-chevron {
+  flex: 0 0 auto;
+  color: #9aa8b8;
+  transition: transform .16s ease;
+}
+
+.jalali-date-picker__trigger--open .jalali-date-picker__trigger-chevron {
+  transform: rotate(180deg);
+}
+
+.jalali-calendar {
+  position: absolute;
+  z-index: 50;
+  top: calc(100% + 8px);
+  right: 0;
+  width: 292px;
+  max-width: min(292px, calc(100vw - 28px));
+  padding: 13px;
+  border: 1px solid #e1e8f0;
+  border-radius: 13px;
+  color: #33465f;
+  background: #fff;
+  box-shadow: 0 14px 38px rgba(24, 43, 68, .17);
+  direction: rtl;
+}
+
+.jalali-calendar__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 13px;
+}
+
+.jalali-calendar__header strong {
+  color: #2e4968;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.jalali-calendar__header button {
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #edf1f5;
+  border-radius: 8px;
+  color: #617895;
+  background: #f9fbfd;
+  cursor: pointer;
+  transition: .15s ease;
+}
+
+.jalali-calendar__header button:hover {
+  color: #315f9f;
+  border-color: #d5e1ef;
+  background: #f1f6fc;
+}
+
+.jalali-calendar__weekdays,
+.jalali-calendar__days {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.jalali-calendar__weekdays {
+  margin-bottom: 7px;
+}
+
+.jalali-calendar__weekdays span {
+  height: 27px;
+  display: grid;
+  place-items: center;
+  color: #91a0b2;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.jalali-calendar__days {
+  grid-auto-rows: 34px;
+}
+
+.jalali-calendar__day {
+  width: 100%;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #465b74;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  transition: .14s ease;
+}
+
+.jalali-calendar__day:hover {
+  border-color: #d9e5f2;
+  color: #315f9f;
+  background: #f2f7fd;
+}
+
+.jalali-calendar__day--today {
+  border-color: #d4e1ef;
+  color: #315f9f;
+  font-weight: 800;
+}
+
+.jalali-calendar__day--selected,
+.jalali-calendar__day--selected:hover {
+  border-color: #315f9f;
+  color: #fff;
+  background: #315f9f;
+  box-shadow: 0 2px 6px rgba(49, 95, 159, .2);
+}
+
+.jalali-calendar__empty {
+  width: 100%;
+  height: 34px;
+}
+
+.jalali-calendar__footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 11px;
+  padding-top: 10px;
+  border-top: 1px solid #eef2f6;
+}
+
+.jalali-calendar__footer button {
+  min-height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 7px;
+  color: #74859a;
+  background: transparent;
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.jalali-calendar__footer button:last-child {
+  color: #315f9f;
+  font-weight: 800;
+  background: #f1f6fc;
+}
+
+.jalali-calendar__footer button:hover {
+  background: #f3f6fa;
+}
+
+@media (max-width: 1050px) {
+  .filters-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .filters-panel__header {
+    min-height: 61px;
+    padding: 8px 10px;
+  }
+
+  .filters-panel__toggle-action {
+    font-size: 0;
+    gap: 0;
+  }
+
+  .filters-panel__toggle-action svg {
+    width: 19px;
+    height: 19px;
+  }
+
+  .filters-panel__toggle-copy small {
+    max-width: 170px;
+  }
+
+  .filters-panel__body {
+    padding: 12px 10px;
+  }
+
+  .filters-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .filter-date-group {
+    grid-column: auto;
+  }
+
+  .filter-date-group__inputs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .filters-panel__footer {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 11px 10px;
+  }
+
+  .filters-panel__footer .button {
+    width: 100%;
+  }
+
+  .filters-reset {
+    min-height: 30px;
+    padding-inline: 7px;
+    font-size: 9px;
+  }
+
+  .jalali-calendar {
+    right: auto;
+    left: 0;
+  }
+
+  .page-heading__title-row {
+    gap: 7px;
+  }
+}
