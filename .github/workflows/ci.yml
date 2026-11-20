@@ -59,3 +59,38 @@ jobs:
         run: docker build --pull -f backend/Dockerfile -t setadscope-backend:test .
       - name: Build frontend image
         run: docker build --pull -f frontend/Dockerfile -t setadscope-frontend:test ./frontend
+
+  auction-db-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: setad
+          POSTGRES_PASSWORD: setad
+          POSTGRES_DB: setadscope
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U setad -d setadscope"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgresql+psycopg://setad:setad@localhost:5432/setadscope
+      PYTHONPATH: backend:src
+      SETADSCOPE_TEST_POSTGRES: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements-dev.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements-dev.txt
+      - name: Migrate a fresh PostgreSQL database to latest version
+        working-directory: backend
+        run: alembic upgrade head
+      - name: Test all five category imports, upserts, filters and Excel endpoints
+        run: python -m pytest backend/tests/test_auction_database.py -q

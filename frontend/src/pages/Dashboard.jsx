@@ -33,6 +33,13 @@ import JalaliDatePicker from "../components/JalaliDatePicker";
 import "./Dashboard.css";
 
 const PAGE_SIZE = 20;
+const AUCTION_CATEGORIES = [
+  { key: "movable", label: "منقول" },
+  { key: "immovable", label: "غیرمنقول" },
+  { key: "rental", label: "اجاره" },
+  { key: "minor", label: "جزئی" },
+  { key: "clearance", label: "حراج اموال تملیکی" },
+];
 const ACTIVE_STATES = new Set(["collecting", "importing"]);
 const EMPTY_FILTERS = {
   province: "",
@@ -423,7 +430,14 @@ function DetailModal({ record, kind, loading, onClose }) {
         ]
       : [
           ["شناسه ردیف", record.id],
+          ["دسته مزایده", AUCTION_CATEGORIES.find((item) => item.key === record.category)?.label],
+          ["شناسه منبع", record.source_party_id],
           ["شناسه مزایده", record.auction_id],
+          ["عنوان مورد", record.item_title],
+          ["شماره مورد", record.item_reference_no],
+          ["نوع مال", record.asset_type],
+          ["نوع مبلغ", record.price_type],
+          ["مدت اجاره (ماه)", record.rent_duration_months],
           ["شماره مزایده", record.auction_no],
           ["سازمان برگزارکننده", record.organization],
           ["استان", record.province],
@@ -489,7 +503,7 @@ function DetailModal({ record, kind, loading, onClose }) {
                 <p>{record.description}</p>
               </div>
             )}
-            {isTender && record?.raw_payload && (
+            {record?.raw_payload && (
               <details className="raw-json">
                 <summary>نمایش پاسخ خام ستاد (JSONB)</summary>
                 <pre>{JSON.stringify(record.raw_payload, null, 2)}</pre>
@@ -510,6 +524,9 @@ function DetailModal({ record, kind, loading, onClose }) {
 export default function Dashboard({ kind, onNavigate }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
+  const [auctionCategory, setAuctionCategory] = useState("movable");
+  const [matchedOnly, setMatchedOnly] = useState(true);
+  const selectedCategoryLabel = AUCTION_CATEGORIES.find((item) => item.key === auctionCategory)?.label || "منقول";
   const [result, setResult] = useState({
     items: [],
     page: 1,
@@ -544,6 +561,7 @@ export default function Dashboard({ kind, onNavigate }) {
       const data = await fetchPage({
         search,
         ...appliedFilters,
+        ...(!isTender ? { category: auctionCategory, matched_only: matchedOnly } : {}),
         sortBy,
         sortDir,
         page: nextPage,
@@ -559,7 +577,7 @@ export default function Dashboard({ kind, onNavigate }) {
     } finally {
       setLoading(false);
     }
-  }, [isTender, search, appliedFilters, sortBy, sortDir, pageSize]);
+  }, [isTender, auctionCategory, matchedOnly, search, appliedFilters, sortBy, sortDir, pageSize]);
 
   useEffect(() => {
     loadPage(1);
@@ -567,8 +585,8 @@ export default function Dashboard({ kind, onNavigate }) {
 
   useEffect(() => {
     getApiHealth().then(() => setApiOnline(true)).catch(() => setApiOnline(false));
-    getCollectionStatus(kind).then(setCollectionState).catch(() => {});
-  }, [kind]);
+    getCollectionStatus(kind, auctionCategory).then(setCollectionState).catch(() => {});
+  }, [kind, auctionCategory]);
 
   useEffect(() => {
     if (!ACTIVE_STATES.has(collectionState.status)) return undefined;
@@ -578,7 +596,7 @@ export default function Dashboard({ kind, onNavigate }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind);
+        const nextState = await getCollectionStatus(kind, auctionCategory);
         if (cancelled) return;
         setCollectionState(nextState);
         if (
@@ -599,7 +617,7 @@ export default function Dashboard({ kind, onNavigate }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, kind, loadPage]);
+  }, [collectionState.status, kind, auctionCategory, loadPage]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -672,12 +690,38 @@ export default function Dashboard({ kind, onNavigate }) {
           </div>
         ),
       },
+      ...(auctionCategory === "rental" ? [{
+        key: "item_title",
+        label: "مورد اجاره",
+        sortable: true,
+        sortKey: "item_title",
+        render: (item) => (
+          <div className="auction-title-cell">
+            <strong>{item.item_title || "—"}</strong>
+            <span>مدت: {item.rent_duration_months ?? "—"} ماه</span>
+          </div>
+        ),
+      }] : []),
+      ...(auctionCategory === "immovable" ? [{
+        key: "item_title",
+        label: "ملک / نوع ملک",
+        sortable: true,
+        sortKey: "item_title",
+        render: (item) => item.asset_type || item.item_title || "—",
+      }] : []),
+      ...(auctionCategory === "clearance" ? [{
+        key: "asset_type",
+        label: "دسته‌بندی کالا",
+        sortable: true,
+        sortKey: "asset_type",
+        render: (item) => item.asset_type || "—",
+      }] : []),
       { key: "organization", label: "سازمان برگزارکننده", sortable: true, sortKey: "organization" },
       { key: "city", label: "شهر", sortable: true, sortKey: "city" },
       { key: "province", label: "استان", sortable: true, sortKey: "province" },
       {
         key: "base_total_price",
-        label: "مبلغ پایه",
+        label: auctionCategory === "rental" ? "مبلغ پایه اجاره" : auctionCategory === "clearance" ? "مبلغ پایه (ریال)" : "مبلغ پایه",
         sortable: true,
         sortKey: "base_total_price",
         className: "numeric-cell",
@@ -715,7 +759,23 @@ export default function Dashboard({ kind, onNavigate }) {
         ),
       },
     ];
-  }, [isTender]);
+  }, [isTender, auctionCategory]);
+
+  function handleCategoryChange(category) {
+    if (category === auctionCategory) return;
+    setAuctionCategory(category);
+    setSearch("");
+    setSearchInput("");
+    setFilterDraft({ ...EMPTY_FILTERS });
+    setAppliedFilters({ ...EMPTY_FILTERS });
+    setPage(1);
+    setSortBy("proposal_deadline");
+    setSortDir("asc");
+    setFiltersOpen(false);
+    setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
+    setCollectionState({ status: "idle" });
+    lastRefreshedRun.current = null;
+  }
 
   function handleSearch(event) {
     event.preventDefault();
@@ -776,7 +836,7 @@ export default function Dashboard({ kind, onNavigate }) {
   async function handleCollection() {
     setError("");
     try {
-      const nextState = await startCollection(kind);
+      const nextState = await startCollection(kind, auctionCategory);
       setCollectionState(nextState);
     } catch (requestError) {
       setError(
@@ -803,6 +863,7 @@ export default function Dashboard({ kind, onNavigate }) {
   const exportValues = {
     search,
     ...appliedFilters,
+    ...(!isTender ? { category: auctionCategory, matched_only: matchedOnly } : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
   };
@@ -886,7 +947,7 @@ export default function Dashboard({ kind, onNavigate }) {
               <p>
                 {isTender
                   ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
-                  : "آگهی‌های مزایده از زیرسامانه مستقل مزایده‌های ستاد"}
+                  : "آگهی‌های " + selectedCategoryLabel + " از زیرسامانه مزایده‌های ستاد"}
               </p>
             </div>
             <div className="page-heading__actions">
@@ -898,7 +959,7 @@ export default function Dashboard({ kind, onNavigate }) {
                 {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
                 {collectionRunning
                   ? "در حال اجرا..."
-                  : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : "مزایده‌ها")}
+                  : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
               </button>
               <a className="button button--secondary" href={exportHref}>
                 <ArrowDownToLine size={16} /> خروجی Excel
@@ -906,6 +967,37 @@ export default function Dashboard({ kind, onNavigate }) {
             </div>
           </section>
 
+          {!isTender && (
+            <section className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
+              <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
+                {AUCTION_CATEGORIES.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    role="tab"
+                    type="button"
+                    className={"auction-category-nav__tab " + (auctionCategory === key ? "auction-category-nav__tab--active" : "")}
+                    aria-selected={auctionCategory === key}
+                    onClick={() => handleCategoryChange(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+              <label className="auction-category-nav__match">
+                <input
+                  type="checkbox"
+                  checked={matchedOnly}
+                  onChange={(event) => { setMatchedOnly(event.target.checked); setPage(1); }}
+                />
+                فقط آگهی‌های مرتبط با کلیدواژه‌ها
+              </label>
+            </section>
+          )}
+          {!isTender && auctionCategory === "clearance" && (
+            <div className="auction-category-note">
+              حراج: فعلاً فقط آگهی‌های سازمان جمع‌آوری و فروش اموال تملیکی (شناسه ۵۳۱۵)
+            </div>
+          )}
           <CollectionProgress state={collectionState} kind={kind} />
 
           <section className="stats-grid">
@@ -913,7 +1005,7 @@ export default function Dashboard({ kind, onNavigate }) {
               icon={isTender ? FileText : Gavel}
               label="رکورد در نتایج"
               value={result.total}
-              hint="تعداد رکوردهای منطبق با فیلتر فعلی"
+              hint={isTender ? "تعداد رکوردهای منطبق با فیلتر فعلی" : matchedOnly ? "فقط آگهی‌های مرتبط" : "همه آگهی‌های دسته انتخاب‌شده"}
               archiveValue={archiveStats.total}
             />
             <StatCard
@@ -956,7 +1048,7 @@ export default function Dashboard({ kind, onNavigate }) {
 
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
-            title={isTender ? "فهرست مناقصه‌ها" : "فهرست مزایده‌ها"}
+            title={isTender ? "فهرست مناقصه‌ها" : "فهرست مزایده‌های " + selectedCategoryLabel}
             tag="داده قابل فیلتر"
             columns={columns}
             items={result.items}

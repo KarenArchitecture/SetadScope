@@ -135,3 +135,66 @@ Both /auctions and /tenders use server-side sorting, filtering, and pagination.
 - The summary cards distinguish the current result/page from full-archive counts.
 
 Setad timestamps such as fromProposalDate, toProposalDate, fromSiteShowDate, toSiteShowDate, publishStartDate, publishFinishDate, winnerAnnounceDate, openedDate, openingDate, lastModifyDate, createDate, and trustOpenedDate are parsed where present. Tender publicNotificationDate, documentsDeadlineDate, proposalDeadlineDate, and openingDate are parsed as well. Original source values remain available in the raw JSONB payload and the tender source-text columns.
+
+
+## All five auction categories (November 2026)
+
+The auction workspace now has five category tabs. Each tab has its own collection job,
+live progress, filters, sorting, Excel export and stored data. The old `setad_main_estate`
+records remain in `auctions`, classified as `movable` by migration 0005.
+
+| Category | Source | Source ID | Amount |
+| --- | --- | --- | --- |
+| movable | eauc mainEstate-Load | auctionParty.id | baseTotalPrice |
+| immovable | eauc mainImmovable-Load | row.id | organizationBasePrice |
+| rental | eauc mainRental-Load | row.id | rentBasePrice |
+| minor | eauc mainMinor-Load | row.id | totalBasePrice |
+| clearance | gw centralboard/cards | cartId | basePrice (IRR) |
+
+The central-board clearance collector is **only scoped to organization 5315**
+(سازمان جمع‌آوری و فروش اموال تملیکی); it is not an all-organizations crawler.
+The URLs and source-specific parameters come from the supplied browser Network captures.
+The site may require further live verification of access or session behavior.
+
+The database keeps **all fetched records**, matching or not. `has_keyword_match` and
+`matched_keywords` are derived metadata; the dashboard shows only matched items by
+default with an explicit toggle to view all. An unmatched auction does not get
+discarded, so future AI models can reclassify it without scraping it again.
+
+Each category uses its own stable source identity: `(source, source_party_id)`.
+In particular, rental entries can share `auctionNo` but must not share the row
+identity. Upsert preserves the original first-seen timestamp and updates the raw
+JSONB and normalized columns.
+
+To run a complete category fetch and import in PowerShell:
+
+```powershell
+.\setad.ps1 collect-category -Category movable
+.\setad.ps1 collect-category -Category immovable
+.\setad.ps1 collect-category -Category rental
+.\setad.ps1 collect-category -Category minor
+.\setad.ps1 collect-category -Category clearance
+```
+
+Or use each category's **جمع‌آوری** button. Both CLI and UI use server-reported
+page counts and start from page zero for these public endpoints.
+The old `.\setad.ps1 collect` alias now runs the full movable collection.
+`.\setad.ps1 collect-tenders` remains unchanged.
+
+The importer reads only the most recent *completed* category-run manifest.
+Partially fetched snapshots are retained for diagnosis but are not imported.
+
+Auction API additions:
+- `GET /api/auctions?category=movable&matched_only=true`
+- `GET /api/auctions?category=rental&matched_only=false`
+- `GET /api/auctions/export.xlsx?category=clearance&matched_only=false`
+- `POST /api/collection/auctions/{category}/run`
+- `GET /api/collection/auctions/{category}/status`
+
+All previous auction list / export parameters (search, status, dates, province,
+city, sort) remain available. Price filtering applies **within** the chosen
+category; rental base and sale base should not be compared as the same concept.
+Only the central-board clearance response explicitly labels its currency IRR.
+
+The Persian calendar year display uses `useGrouping: false` so ۱۴۰۵ is not
+rendered as ۱٬۴۰۵.

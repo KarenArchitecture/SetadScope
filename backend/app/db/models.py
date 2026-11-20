@@ -29,6 +29,14 @@ class Auction(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(40), default="setad_main_estate", nullable=False)
     source_party_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    category: Mapped[str] = mapped_column(String(24), nullable=False, default="movable", server_default="movable")
+    has_keyword_match: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    item_title: Mapped[str | None] = mapped_column(Text)
+    item_reference_no: Mapped[str | None] = mapped_column(String(120))
+    asset_type: Mapped[str | None] = mapped_column(String(180))
+    price_type: Mapped[str | None] = mapped_column(String(40))
+    rent_duration_months: Mapped[int | None] = mapped_column()
+    rent_duration_days: Mapped[int | None] = mapped_column()
     auction_id: Mapped[str | None] = mapped_column(String(120))
     auction_no: Mapped[str | None] = mapped_column(String(120))
     auction_reference_no: Mapped[str | None] = mapped_column(String(120))
@@ -71,6 +79,8 @@ class Auction(Base):
         Index("ix_auctions_location", "province", "city"),
         Index("ix_auctions_base_total_price", "base_total_price"),
         Index("ix_auctions_state", "state"),
+        Index("ix_auctions_category", "category"),
+        Index("ix_auctions_category_match", "category", "has_keyword_match"),
     )
 
 

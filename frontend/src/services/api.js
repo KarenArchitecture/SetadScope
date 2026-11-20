@@ -53,12 +53,18 @@ export async function getApiHealth() {
   return response.data;
 }
 
-export async function startCollection(kind) {
-  const response = await api.post("/api/collection/" + kind + "/run");
+export async function startCollection(kind, category = "movable") {
+  const path = kind === "tenders"
+    ? "/api/collection/tenders/run"
+    : "/api/collection/auctions/" + category + "/run";
+  const response = await api.post(path);
   return response.data;
 }
 
-export async function getCollectionStatus(kind) {
-  const response = await api.get("/api/collection/" + kind + "/status");
+export async function getCollectionStatus(kind, category = "movable") {
+  const path = kind === "tenders"
+    ? "/api/collection/tenders/status"
+    : "/api/collection/auctions/" + category + "/status";
+  const response = await api.get(path);
   return response.data;
 }

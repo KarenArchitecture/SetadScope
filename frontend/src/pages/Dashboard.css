@@ -1353,3 +1353,101 @@
   outline: 2px solid #8aadd1;
   outline-offset: 2px;
 }
+
+
+/* Auction subcategories share the table component but have independent data and jobs. */
+.auction-category-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 14px;
+  padding: 10px 11px;
+  border: 1px solid #e0e8f2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 3px 12px rgba(25, 50, 80, .04);
+}
+
+.auction-category-nav__tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.auction-category-nav__tab {
+  min-height: 35px;
+  padding: 0 13px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #6a7e97;
+  background: transparent;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, border-color .16s ease;
+}
+
+.auction-category-nav__tab:hover {
+  border-color: #dce6f1;
+  color: #315f9f;
+  background: #f5f9fd;
+}
+
+.auction-category-nav__tab--active,
+.auction-category-nav__tab--active:hover {
+  border-color: #315f9f;
+  color: #fff;
+  background: #315f9f;
+}
+
+.auction-category-nav__match {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #617891;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.auction-category-nav__match input {
+  width: 15px;
+  height: 15px;
+  accent-color: #315f9f;
+  cursor: pointer;
+}
+
+.auction-category-note {
+  margin: -3px 0 13px;
+  padding: 9px 12px;
+  border: 1px solid #e8edf5;
+  border-radius: 9px;
+  color: #697c93;
+  background: #f9fbff;
+  font-size: 10px;
+  line-height: 1.8;
+}
+
+@media (max-width: 720px) {
+  .auction-category-nav {
+    align-items: flex-start;
+    gap: 10px;
+    padding: 9px;
+  }
+
+  .auction-category-nav__tabs {
+    width: 100%;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    scrollbar-width: thin;
+  }
+
+  .auction-category-nav__tab {
+    padding-inline: 10px;
+  }
+}

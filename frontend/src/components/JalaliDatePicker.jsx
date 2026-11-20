@@ -16,7 +16,7 @@ const MONTHS = [
   "اسفند",
 ];
 const WEEKDAYS = ["ش", "ی", "د", "س", "چ", "پ", "ج"];
-const PERSIAN_NUMBER = new Intl.NumberFormat("fa-IR");
+const PERSIAN_NUMBER = new Intl.NumberFormat("fa-IR", { useGrouping: false });
 const JALALI_LEAP_REMAINDERS = new Set([1, 5, 9, 13, 17, 22, 26, 30]);
 
 function toPersianNumber(value) {

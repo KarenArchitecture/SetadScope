@@ -21,6 +21,8 @@ from app.db.models import Auction
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
+from app.services.auction_ingestion import AUCTION_CATEGORIES, import_auction_pages
+from app.auction_category_jobs import latest_category_files
 from app.services.date_normalization import parse_filter_bound
 from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
 from app.tender_jobs import latest_tender_run_files
@@ -31,6 +33,10 @@ app.include_router(tenders_router)
 
 ORDER_FIELDS = {
     "source_party_id": Auction.source_party_id,
+    "item_title": Auction.item_title,
+    "item_reference_no": Auction.item_reference_no,
+    "asset_type": Auction.asset_type,
+    "price_type": Auction.price_type,
     "auction_no": Auction.auction_no,
     "auction_reference_no": Auction.auction_reference_no,
     "title": Auction.title,
@@ -58,7 +64,7 @@ ORDER_FIELDS = {
 COLLECTION_START_PAGE = 1
 COLLECTION_END_PAGE = 37
 PROGRESS_PREFIX = "PROGRESS_JSON:"
-COLLECTION_KINDS = ("auctions", "tenders")
+COLLECTION_KINDS = ("auctions", "tenders", "immovable", "rental", "minor", "clearance")
 collection_lock = threading.Lock()
 
 
@@ -71,7 +77,7 @@ def initial_collection_state(kind: str) -> dict:
         "started_at": None,
         "finished_at": None,
         "current_page": 0,
-        "total_pages": COLLECTION_END_PAGE if kind == "auctions" else None,
+        "total_pages": None,
         "pages_completed": 0,
         "records_fetched": 0,
         "records_total": None,
@@ -102,7 +108,7 @@ def run_collection_job(kind: str) -> None:
             "phase": "collecting",
             "message": (
                 "در حال دریافت صفحات مزایده‌ها..."
-                if kind == "auctions"
+                if kind != "tenders"
                 else "در حال اتصال به سامانه مناقصه‌ها و شناسایی تعداد صفحات..."
             ),
             "started_at": started_at,
@@ -121,19 +127,13 @@ def run_collection_job(kind: str) -> None:
         ]
         env["PYTHONPATH"] = os.pathsep.join(value for value in python_paths if value)
 
-        if kind == "auctions":
-            module = "setad_scope.collectors.fetch_main_estate"
-            collector_args = [
-                "--start-page",
-                str(COLLECTION_START_PAGE),
-                "--end-page",
-                str(COLLECTION_END_PAGE),
-                "--delay",
-                "1",
-            ]
-        else:
+        if kind == "tenders":
             module = "setad_scope.collectors.fetch_tenders"
-            collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.5"]
+            collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.7"]
+        else:
+            category = "movable" if kind == "auctions" else kind
+            module = "setad_scope.collectors.fetch_auction_categories"
+            collector_args = ["--category", category, "--start-page", "0", "--delay", "0.7"]
 
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", module, *collector_args],
@@ -183,10 +183,11 @@ def run_collection_job(kind: str) -> None:
             output=output,
         )
 
-        if kind == "auctions":
-            files = latest_run_files(RAW_DIR)
-        else:
+        if kind == "tenders":
             files = latest_tender_run_files(TENDER_RAW_DIR)
+        else:
+            category = "movable" if kind == "auctions" else kind
+            files = latest_category_files(category)
 
         if not files:
             raise RuntimeError("Collector completed but no raw response page files were found.")
@@ -205,19 +206,16 @@ def run_collection_job(kind: str) -> None:
                 pages_completed=completed,
                 records_fetched=int(progress.get("fetched", 0)),
                 records_stored=int(progress.get("stored", 0)),
-                records_skipped=int(
-                    progress.get("skipped_missing_id", 0)
-                    + progress.get("skipped_invalid_record", 0)
-                    + progress.get("skipped_expired", 0)
-                ),
+                records_skipped=int(progress.get("skipped_missing_id", 0) + progress.get("skipped_invalid_record", 0) + progress.get("skipped_expired", 0)),
                 progress_percent=min(percent, 99),
             )
 
         with SessionLocal() as session:
-            if kind == "auctions":
-                totals = import_pages(session, files, progress_callback=report_import_progress)
-            else:
+            if kind == "tenders":
                 totals = import_tender_pages(session, files, progress_callback=report_import_progress)
+            else:
+                category = "movable" if kind == "auctions" else kind
+                totals = import_auction_pages(session, files, category, progress_callback=report_import_progress)
 
         records_fetched = int(totals.get("fetched", 0))
         records_stored = int(totals.get("stored", 0))
@@ -257,6 +255,14 @@ def auction_to_dict(a: Auction) -> dict:
     return {
         "id": a.id,
         "source_party_id": a.source_party_id,
+        "category": a.category,
+        "has_keyword_match": a.has_keyword_match,
+        "item_title": a.item_title,
+        "item_reference_no": a.item_reference_no,
+        "asset_type": a.asset_type,
+        "price_type": a.price_type,
+        "rent_duration_months": a.rent_duration_months,
+        "rent_duration_days": a.rent_duration_days,
         "auction_id": a.auction_id,
         "auction_no": a.auction_no,
         "auction_reference_no": a.auction_reference_no,
@@ -312,8 +318,12 @@ def filtered_query(
     deadline_to: str | None = None,
     price_min: Decimal | None = None,
     price_max: Decimal | None = None,
+    category: str = "movable",
+    matched_only: bool = True,
 ):
-    query = select(Auction)
+    query = select(Auction).where(Auction.category == category)
+    if matched_only:
+        query = query.where(Auction.has_keyword_match.is_(True))
     now = datetime.now(timezone.utc)
     announcement_date = func.coalesce(Auction.site_show_start_at, Auction.publish_start_at)
 
@@ -331,6 +341,9 @@ def filtered_query(
                 Auction.city.ilike(term),
                 Auction.province.ilike(term),
                 Auction.auction_no.ilike(term),
+                Auction.item_title.ilike(term),
+                Auction.item_reference_no.ilike(term),
+                Auction.asset_type.ilike(term),
             )
         )
     if province:
@@ -365,22 +378,24 @@ def filtered_query(
     return query
 
 
-def auction_archive_stats(db: Session) -> dict[str, int]:
-    total = db.scalar(select(func.count(Auction.id))) or 0
+def auction_archive_stats(db: Session, category: str) -> dict[str, int]:
+    total = db.scalar(select(func.count(Auction.id)).where(Auction.category == category)) or 0
+    matched_total = db.scalar(select(func.count(Auction.id)).where(Auction.category == category, Auction.has_keyword_match.is_(True))) or 0
     provinces = db.scalar(
-        select(func.count(func.distinct(Auction.province))).where(Auction.province.is_not(None))
+        select(func.count(func.distinct(Auction.province))).where(Auction.category == category, Auction.province.is_not(None))
     ) or 0
     cities = db.scalar(
-        select(func.count(func.distinct(Auction.city))).where(Auction.city.is_not(None))
+        select(func.count(func.distinct(Auction.city))).where(Auction.category == category, Auction.city.is_not(None))
     ) or 0
     organizations = db.scalar(
-        select(func.count(func.distinct(Auction.organization))).where(Auction.organization.is_not(None))
+        select(func.count(func.distinct(Auction.organization))).where(Auction.category == category, Auction.organization.is_not(None))
     ) or 0
     published = db.scalar(
-        select(func.count(Auction.id)).where(Auction.state == "PUBLISHED")
+        select(func.count(Auction.id)).where(Auction.category == category, Auction.state == "PUBLISHED")
     ) or 0
     return {
         "total": total,
+        "matched_total": matched_total,
         "province_count": provinces,
         "city_count": cities,
         "organization_count": organizations,
@@ -388,22 +403,22 @@ def auction_archive_stats(db: Session) -> dict[str, int]:
     }
 
 
-def auction_filter_options(db: Session) -> dict[str, list]:
+def auction_filter_options(db: Session, category: str) -> dict[str, list]:
     provinces = db.scalars(
         select(Auction.province)
-        .where(Auction.province.is_not(None))
+        .where(Auction.category == category, Auction.province.is_not(None))
         .distinct()
         .order_by(Auction.province)
     ).all()
     city_rows = db.execute(
         select(Auction.city, Auction.province)
-        .where(Auction.city.is_not(None), Auction.province.is_not(None))
+        .where(Auction.category == category, Auction.city.is_not(None), Auction.province.is_not(None))
         .distinct()
         .order_by(Auction.province, Auction.city)
     ).all()
     states = db.scalars(
         select(Auction.state)
-        .where(Auction.state.is_not(None))
+        .where(Auction.category == category, Auction.state.is_not(None))
         .distinct()
         .order_by(Auction.state)
     ).all()
@@ -456,6 +471,24 @@ def start_collection(
 
 
 # Backward-compatible aliases: the old untyped endpoints continue to target auctions.
+# Category-specific collection endpoints. Existing /api/collection/auctions aliases movable.
+@app.get("/api/collection/auctions/{category}/status")
+def get_auction_category_status(
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"],
+):
+    kind = "auctions" if category == "movable" else category
+    return get_collection_status(kind)
+
+
+@app.post("/api/collection/auctions/{category}/run", status_code=202)
+def start_auction_category_collection(
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"],
+    background_tasks: BackgroundTasks,
+):
+    kind = "auctions" if category == "movable" else category
+    return start_collection(kind, background_tasks)
+
+
 @app.get("/api/collection/status")
 def get_auction_collection_status():
     return get_collection_status("auctions")
@@ -469,6 +502,8 @@ def start_auction_collection(background_tasks: BackgroundTasks):
 @app.get("/api/auctions")
 def get_auctions(
     search: str | None = None,
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    matched_only: bool = True,
     status: Literal["active", "archive", "all"] = "all",
     province: str | None = None,
     city: str | None = None,
@@ -493,7 +528,7 @@ def get_auctions(
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max,
+        price_min, price_max, category, matched_only,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -509,8 +544,8 @@ def get_auctions(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
-        "archive_stats": auction_archive_stats(db),
-        "filter_options": auction_filter_options(db),
+        "archive_stats": auction_archive_stats(db, category),
+        "filter_options": auction_filter_options(db, category),
     }
 
 
@@ -518,6 +553,8 @@ def get_auctions(
 def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    matched_only: bool = True,
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -536,7 +573,7 @@ def export_auctions(
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max,
+        price_min, price_max, category, matched_only,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -544,7 +581,7 @@ def export_auctions(
     sheet = workbook.create_sheet("SetadScope")
     sheet.append(
         [
-            "شناسه", "عنوان", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
+            "شناسه", "دسته", "عنوان", "عنوان مورد", "نوع قیمت", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
             "تاریخ اعلام در سایت", "شروع پیشنهاد", "مهلت پیشنهاد", "مهلت دریافت اسناد",
             "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
             "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
@@ -554,13 +591,15 @@ def export_auctions(
     for a in db.scalars(query).yield_per(500):
         sheet.append(
             [
-                a.source_party_id, a.title, a.description, ", ".join(a.matched_keywords or []),
+                excel_safe(a.source_party_id), a.category,
+                excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
+                excel_safe(a.description), ", ".join(a.matched_keywords or []),
                 excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
                 str(a.site_show_start_at or a.publish_start_at or ""),
                 str(a.proposal_start or ""), str(a.proposal_deadline or ""),
                 str(a.document_deadline or ""),
-                float(a.base_total_price) if a.base_total_price is not None else None,
-                float(a.trust_amount) if a.trust_amount is not None else None,
+                str(a.base_total_price) if a.base_total_price is not None else None,
+                str(a.trust_amount) if a.trust_amount is not None else None,
                 str(a.winner_announce_at or ""), str(a.opening_at or ""),
                 excel_safe(a.auction_no), excel_safe(a.source_url),
             ]
@@ -580,4 +619,4 @@ def get_auction(auction_id: int, db: Session = Depends(get_db)):
     row = db.get(Auction, auction_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Auction listing not found")
-    return auction_to_dict(row)
+    return {**auction_to_dict(row), "raw_payload": row.raw_payload}
