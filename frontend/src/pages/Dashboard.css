@@ -1451,3 +1451,183 @@
     padding-inline: 10px;
   }
 }
+
+
+/* UI/UX: balanced filter layout, visible reset and global theme switch */
+.filters-grid--auctions { grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: 13px; row-gap: 16px; }
+.filters-grid--auctions > .filter-field { grid-column: span 2; }
+.filters-grid--auctions > .filter-field--price { grid-column: span 3; }
+.filters-grid--auctions > .filter-date-group { grid-column: span 3; }
+.filters-grid--tenders { grid-template-columns: repeat(4, minmax(0, 1fr)); column-gap: 13px; row-gap: 16px; }
+.filters-grid--tenders > .filter-field { grid-column: span 1; }
+.filters-grid--tenders > .filter-date-group { grid-column: span 2; }
+.filters-grid--tenders > .filter-date-group:last-child { grid-column: span 4; }
+.filter-date-group { background: var(--surface-soft); }
+.filter-date-group__title { font-size: 11px; }
+.filter-field > span { font-size: 11px; }
+.filter-field input, .filter-field select, .jalali-date-picker__trigger { height: 43px; font-size: 12px; }
+.filters-panel__body { padding: 18px; }
+.filters-reset { font-size: 11px; }
+.filters-reset:disabled { opacity: .45; cursor: not-allowed; }
+.filters-reset:disabled:hover { color: #78879a; border-color: #e8edf3; background: #fff; }
+.topbar__actions { display: inline-flex; align-items: center; gap: 14px; }
+.theme-toggle {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  min-width: 83px; min-height: 35px; padding: 0 10px;
+  border: 1px solid var(--border); border-radius: 9px;
+  color: var(--text-secondary); background: var(--surface);
+  font: inherit; font-size: 11px; font-weight: 700; cursor: pointer;
+}
+.theme-toggle:hover { border-color: #779ac5; }
+@media (max-width: 1050px) {
+  .filters-grid--auctions, .filters-grid--tenders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .filters-grid--auctions > .filter-field, .filters-grid--auctions > .filter-field--price,
+  .filters-grid--tenders > .filter-field { grid-column: span 1; }
+  .filters-grid--auctions > .filter-date-group, .filters-grid--tenders > .filter-date-group,
+  .filters-grid--tenders > .filter-date-group:last-child { grid-column: span 2; }
+}
+@media (max-width: 720px) {
+  .filters-grid--auctions, .filters-grid--tenders { grid-template-columns: 1fr; }
+  .filters-grid--auctions > .filter-field, .filters-grid--auctions > .filter-field--price,
+  .filters-grid--auctions > .filter-date-group, .filters-grid--tenders > .filter-field,
+  .filters-grid--tenders > .filter-date-group, .filters-grid--tenders > .filter-date-group:last-child {
+    grid-column: span 1;
+  }
+  .filters-panel__header { gap: 7px; }
+  .filters-panel__toggle-copy small { max-width: 125px; }
+  .sidebar { gap: 12px; }
+  .sidebar-nav { display: flex; overflow-x: auto; gap: 6px; scrollbar-width: thin; }
+  .sidebar-nav__item { min-width: max-content; min-height: 36px; padding: 5px 11px; }
+  .sidebar-nav__item--muted { display: none; }
+  .theme-toggle { min-width: 36px; padding: 0 8px; }
+  .theme-toggle span { display: none; }
+  .topbar__actions { gap: 8px; }
+}
+
+/* Theme overrides of legacy hard-coded presentation colors. */
+html[data-theme="dark"] .topbar,
+html[data-theme="dark"] .stat-card,
+html[data-theme="dark"] .data-panel,
+html[data-theme="dark"] .filters-panel,
+html[data-theme="dark"] .auction-category-nav,
+html[data-theme="dark"] .detail-modal,
+html[data-theme="dark"] .filter-date-group,
+html[data-theme="dark"] .jalali-calendar,
+html[data-theme="dark"] .settings-card {
+  color: var(--text-primary);
+  border-color: var(--border);
+  background: var(--surface);
+  box-shadow: none;
+}
+html[data-theme="dark"] .filters-panel__body {
+  border-color: var(--border);
+  background: var(--surface);
+}
+html[data-theme="dark"] .filters-panel__header,
+html[data-theme="dark"] .filters-panel__footer,
+html[data-theme="dark"] .table-footer,
+html[data-theme="dark"] .detail-description,
+html[data-theme="dark"] .detail-field,
+html[data-theme="dark"] .raw-json,
+html[data-theme="dark"] .jalali-calendar__footer {
+  border-color: var(--border);
+}
+html[data-theme="dark"] .filters-panel__toggle-icon,
+html[data-theme="dark"] .filters-reset,
+html[data-theme="dark"] .filter-field input,
+html[data-theme="dark"] .filter-field select,
+html[data-theme="dark"] .jalali-date-picker__trigger,
+html[data-theme="dark"] .jalali-calendar__header button,
+html[data-theme="dark"] .pagination button,
+html[data-theme="dark"] .button--secondary,
+html[data-theme="dark"] .icon-button,
+html[data-theme="dark"] .search-bar,
+html[data-theme="dark"] .raw-json,
+html[data-theme="dark"] .settings-keyword-row input,
+html[data-theme="dark"] .settings-add-row input {
+  border-color: var(--border);
+  color: var(--text-primary);
+  background: var(--surface-soft);
+}
+html[data-theme="dark"] .filters-reset:disabled:hover { background: var(--surface-soft); color: var(--text-muted); }
+html[data-theme="dark"] .filter-field input:disabled,
+html[data-theme="dark"] .filter-field select:disabled { color: #7288a6; background: #172236; }
+html[data-theme="dark"] .filters-panel__toggle-copy strong,
+html[data-theme="dark"] .filters-panel__toggle-action,
+html[data-theme="dark"] .filter-field > span,
+html[data-theme="dark"] .filter-date-group__title,
+html[data-theme="dark"] .page-heading h1,
+html[data-theme="dark"] .stat-card__value,
+html[data-theme="dark"] .data-panel__header h2,
+html[data-theme="dark"] .auction-title-cell strong,
+html[data-theme="dark"] .detail-modal__header h2,
+html[data-theme="dark"] .detail-modal__title,
+html[data-theme="dark"] .detail-field strong,
+html[data-theme="dark"] .detail-description p,
+html[data-theme="dark"] .jalali-calendar__header strong,
+html[data-theme="dark"] .jalali-date-picker__value,
+html[data-theme="dark"] .search-bar input,
+html[data-theme="dark"] .collection-progress__top strong,
+html[data-theme="dark"] .collection-progress__metrics strong {
+  color: var(--text-primary);
+}
+html[data-theme="dark"] .page-heading p,
+html[data-theme="dark"] .topbar__breadcrumb,
+html[data-theme="dark"] .eyebrow,
+html[data-theme="dark"] .stat-card__label,
+html[data-theme="dark"] .stat-card__hint,
+html[data-theme="dark"] .stat-card__archive,
+html[data-theme="dark"] .filters-panel__toggle-copy small,
+html[data-theme="dark"] .filters-panel__footer,
+html[data-theme="dark"] .filter-field,
+html[data-theme="dark"] .auction-table th,
+html[data-theme="dark"] .auction-table td,
+html[data-theme="dark"] .table-footer,
+html[data-theme="dark"] .dashboard-footer,
+html[data-theme="dark"] .detail-field span,
+html[data-theme="dark"] .detail-description strong,
+html[data-theme="dark"] .jalali-calendar__weekdays span,
+html[data-theme="dark"] .collection-progress__message,
+html[data-theme="dark"] .collection-progress__metrics {
+  color: var(--text-muted);
+}
+html[data-theme="dark"] .filter-date-group,
+html[data-theme="dark"] .auction-table thead,
+html[data-theme="dark"] .raw-tag,
+html[data-theme="dark"] .auction-category-note,
+html[data-theme="dark"] .state-pill,
+html[data-theme="dark"] .detail-description,
+html[data-theme="dark"] .detail-field,
+html[data-theme="dark"] .jalali-calendar__header button,
+html[data-theme="dark"] .jalali-calendar__footer button,
+html[data-theme="dark"] .collection-progress {
+  border-color: var(--border);
+  background: var(--surface-soft);
+}
+html[data-theme="dark"] .auction-table td { border-top-color: var(--border); }
+html[data-theme="dark"] .auction-table tbody tr:hover,
+html[data-theme="dark"] .button--secondary:hover,
+html[data-theme="dark"] .filters-reset:hover,
+html[data-theme="dark"] .auction-category-nav__tab:hover,
+html[data-theme="dark"] .jalali-calendar__day:hover { background: #243956; }
+html[data-theme="dark"] .auction-category-nav__tab { color: var(--text-muted); }
+html[data-theme="dark"] .auction-category-nav__tab--active,
+html[data-theme="dark"] .auction-category-nav__tab--active:hover,
+html[data-theme="dark"] .jalali-calendar__day--selected,
+html[data-theme="dark"] .jalali-calendar__day--selected:hover { color: #fff; background: #315f9f; }
+html[data-theme="dark"] .auction-category-nav__match { color: var(--text-secondary); }
+html[data-theme="dark"] .jalali-calendar__day { color: var(--text-primary); }
+html[data-theme="dark"] .jalali-calendar__day--today { border-color: #6a92bc; }
+html[data-theme="dark"] .jalali-calendar__day--selected { color: #fff; }
+html[data-theme="dark"] .jalali-date-picker__placeholder,
+html[data-theme="dark"] .search-bar input::placeholder { color: #7c90aa; }
+html[data-theme="dark"] .detail-modal__note,
+html[data-theme="dark"] .notice-banner { color: #e5d1ab; background: #352d24; border-color: #5d4b32; }
+html[data-theme="dark"] .notice-banner strong { color: #f7d6a2; }
+html[data-theme="dark"] .notice-banner p { color: #dec79e; }
+html[data-theme="dark"] .raw-json pre { color: #b8cbe1; border-color: var(--border); }
+html[data-theme="dark"] .state-pill--published { color: #8bdfb5; background: #1c4037; }
+html[data-theme="dark"] .collection-progress--failed { background: #39272c; border-color: #73404a; }
+html[data-theme="dark"] .collection-progress__track { background: #2a425f; }
+html[data-theme="dark"] .settings-alert--error { background: var(--danger-bg); }
+html[data-theme="dark"] .settings-alert--success { background: var(--success-bg); }
