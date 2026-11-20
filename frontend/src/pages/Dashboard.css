@@ -1330,7 +1330,12 @@
     font-size: 9px;
   }
 
-  .jalali-calendar {
+  .filter-date-group__inputs .filter-field:first-child .jalali-calendar {
+    right: 0;
+    left: auto;
+  }
+
+  .filter-date-group__inputs .filter-field:nth-child(2) .jalali-calendar {
     right: auto;
     left: 0;
   }
@@ -1338,4 +1343,13 @@
   .page-heading__title-row {
     gap: 7px;
   }
+}
+
+
+.jalali-calendar__day:focus-visible,
+.jalali-calendar__header button:focus-visible,
+.jalali-calendar__footer button:focus-visible,
+.jalali-date-picker__trigger:focus-visible {
+  outline: 2px solid #8aadd1;
+  outline-offset: 2px;
 }
