@@ -616,7 +616,7 @@ def export_auctions(
         [
             excel_safe(a.source_party_id), a.category,
             excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
-            excel_safe(a.description), ", ".join(a.matched_keywords or []),
+            excel_safe(a.description), excel_safe(", ".join(a.matched_keywords or [])),
             excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
             str(a.site_show_start_at or a.publish_start_at or ""),
             str(a.proposal_start or ""), str(a.proposal_deadline or ""),
