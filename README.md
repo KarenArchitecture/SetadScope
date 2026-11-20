@@ -75,3 +75,30 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ## Current data limitations
 
 The current collector covers the public main-estate listing source only. Keyword matching is enabled; deadline filtering is temporarily disabled so matched listings are not lost while Jalali date parsing is pending. Document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.
+
+
+## Tender records
+
+Tender listings are stored separately from auction listings. The complete source response row is retained in PostgreSQL JSONB; normalized fields are used for search, sorting, pagination, and export.
+
+The importer expects response pages under data/raw/tenders/ named tender_page_*.json. Each page must contain the Setad response's top-level gridModel array.
+
+After saving response pages in that folder, run:
+
+\`\`\`powershell
+docker compose run --rm api python -m app.tender_jobs
+\`\`\`
+
+To re-import every saved snapshot:
+
+\`\`\`powershell
+docker compose run --rm api python -m app.tender_jobs --all
+\`\`\`
+
+Tender API endpoints:
+
+- GET /api/tenders
+- GET /api/tenders/{id} (includes the retained raw_payload)
+- GET /api/tenders/export.xlsx
+
+The source dates currently arrive as Jalali strings (for example, 1405/09/17 14:30:00). They are stored unchanged as text; no Gregorian conversion or date-based active/archive filtering is applied. The automated tender-page fetcher is intentionally not wired yet because the uploaded response body does not identify the exact AJAX endpoint or request method. Do not guess that endpoint; capture it from the browser Network panel before implementing the collector.

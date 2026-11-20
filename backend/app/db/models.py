@@ -1,14 +1,31 @@
 from __future__ import annotations
+
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import BigInteger, DateTime, Index, JSON, Numeric, String, Text, UniqueConstraint, func
+from typing import Any
+
+from sqlalchemy import (
+    BigInteger,
+    DateTime,
+    Index,
+    JSON,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
 
 class Base(DeclarativeBase):
     pass
 
+
 class Auction(Base):
     __tablename__ = "auctions"
+
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(40), default="setad_main_estate", nullable=False)
     source_party_id: Mapped[str] = mapped_column(String(120), nullable=False)
@@ -30,16 +47,54 @@ class Auction(Base):
     money_unit: Mapped[str | None] = mapped_column(String(30))
     source_url: Mapped[str | None] = mapped_column(Text)
     matched_keywords: Mapped[list[str]] = mapped_column(JSON, nullable=False, default=list)
-    raw_payload: Mapped[dict] = mapped_column(JSON, nullable=False)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
     __table_args__ = (
         UniqueConstraint("source", "source_party_id", name="uq_auctions_source_party"),
         Index("ix_auctions_deadline", "proposal_deadline"),
     )
 
+
+class Tender(Base):
+    __tablename__ = "tenders"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    source: Mapped[str] = mapped_column(String(40), default="setad_tender", nullable=False)
+    source_tender_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    tender_number: Mapped[str | None] = mapped_column(String(120))
+    title: Mapped[str | None] = mapped_column(Text)
+    tender_type: Mapped[str | None] = mapped_column(String(120))
+    type_name: Mapped[str | None] = mapped_column(String(240))
+    organization: Mapped[str | None] = mapped_column(Text)
+    province: Mapped[str | None] = mapped_column(String(200))
+    city: Mapped[str | None] = mapped_column(String(200))
+    description: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str | None] = mapped_column(String(120))
+    public_notification_date: Mapped[str | None] = mapped_column(String(40))
+    documents_deadline_date: Mapped[str | None] = mapped_column(String(40))
+    proposal_deadline_date: Mapped[str | None] = mapped_column(String(40))
+    opening_date: Mapped[str | None] = mapped_column(String(40))
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("source", "source_tender_id", name="uq_tenders_source_tender"),
+        Index("ix_tenders_number", "tender_number"),
+        Index("ix_tenders_notification_date", "public_notification_date"),
+        Index("ix_tenders_proposal_deadline", "proposal_deadline_date"),
+    )
+
+
 class IngestionRun(Base):
     __tablename__ = "ingestion_runs"
+
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
