@@ -68,3 +68,14 @@ export async function getCollectionStatus(kind, category = "movable") {
   const response = await api.get(path);
   return response.data;
 }
+
+
+export async function getKeywords() {
+  const response = await api.get("/api/settings/keywords");
+  return response.data;
+}
+
+export async function updateKeywords(keywords) {
+  const response = await api.put("/api/settings/keywords", { keywords });
+  return response.data;
+}
