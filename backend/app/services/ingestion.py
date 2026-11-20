@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Auction, IngestionRun
 from app.services.keyword_matching import matched_keywords
+from app.services.keyword_settings import configured_keywords
 from app.services.date_normalization import parse_setad_datetime
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -32,7 +33,7 @@ def to_decimal(value: object) -> Decimal | None:
         return None
 
 
-def project_record(record: dict, now: datetime | None = None) -> tuple[dict | None, str]:
+def project_record(record: dict, now: datetime | None = None, keywords: tuple[str, ...] | None = None) -> tuple[dict | None, str]:
     """Project a raw Setad row when it matches a requested keyword; do not filter by dates yet."""
     party = record.get("auctionParty") or {}
     auction = party.get("auction") or {}
@@ -42,7 +43,7 @@ def project_record(record: dict, now: datetime | None = None) -> tuple[dict | No
 
     title = auction.get("title") or party.get("title") or record.get("title") or ""
     description = auction.get("description") or party.get("description") or ""
-    keywords = matched_keywords(title, description)
+    keywords = matched_keywords(title, description, keywords=keywords)
     if not keywords:
         return None, "not_matched"
 
@@ -109,6 +110,7 @@ def import_pages(
     db.commit()
     run_id = run.id
     try:
+        active_keywords = configured_keywords(db)
         total_pages = len(paths)
         for page_index, path in enumerate(paths, start=1):
             payload = json.loads(path.read_text(encoding="utf-8"))
@@ -117,7 +119,7 @@ def import_pages(
                 raise ValueError(f"Missing gridModel array: {path}")
             for record in records:
                 totals["fetched"] += 1
-                item, status = project_record(record, now)
+                item, status = project_record(record, now, keywords=active_keywords)
                 if item is None:
                     continue
                 totals["matched"] += 1
