@@ -141,3 +141,53 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
         finally:
             db.execute(delete(Auction).where(Auction.source.in_(list(SOURCES.values()))))
             db.commit()
+
+
+
+def test_saved_keyword_settings_affect_next_auction_import(tmp_path):
+    from app.db.models import AppSetting
+    from app.services.keyword_settings import SETTING_KEY
+
+    client = TestClient(app)
+    with SessionLocal() as db:
+        existing = db.get(AppSetting, SETTING_KEY)
+        previous = existing.value.copy() if existing else None
+
+    try:
+        original = client.get("/api/settings/keywords")
+        assert original.status_code == 200
+        assert original.json()["keywords"]
+
+        invalid = client.put("/api/settings/keywords", json={"keywords": ["چوب", "چوب"]})
+        assert invalid.status_code == 422
+
+        saved = client.put("/api/settings/keywords", json={"keywords": ["آلومینیوم"]})
+        assert saved.status_code == 200, saved.text
+        assert client.get("/api/settings/keywords").json()["keywords"] == ["آلومینیوم"]
+
+        raw = {
+            "auctionParty": {
+                "id": 73000099,
+                "title": "فروش آلومینیوم",
+                "baseTotalPrice": 2500,
+                "auction": {"id": 81999, "auctionNo": 119999, "title": "فروش آلومینیوم"},
+            },
+        }
+        path = tmp_path / "custom-keywords.json"
+        path.write_text(json.dumps({"gridModel": [raw]}, ensure_ascii=False), encoding="utf-8")
+        with SessionLocal() as db:
+            result = import_auction_pages(db, [path], "movable")
+            assert result["matched"] == 1
+            row = db.scalar(select(Auction).where(Auction.source_party_id == "73000099"))
+            assert row is not None
+            assert row.matched_keywords == ["آلومینیوم"]
+    finally:
+        with SessionLocal() as db:
+            db.execute(delete(Auction).where(Auction.source_party_id == "73000099"))
+            setting = db.get(AppSetting, SETTING_KEY)
+            if previous is None:
+                if setting is not None:
+                    db.delete(setting)
+            elif setting is not None:
+                setting.value = previous
+            db.commit()
