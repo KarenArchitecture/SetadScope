@@ -19,3 +19,29 @@ body, button, input { font-family: "Vazirmatn", Tahoma, sans-serif; }
 button, input { font-size: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #9fc1f4; outline-offset: 2px; }
 ::selection { color: #17365f; background: #d9e8ff; }
+
+
+:root {
+  --surface: #fff;
+  --surface-soft: #f8fafc;
+  --text-secondary: #607188;
+  --selected-bg: #eff6ff;
+  --danger-bg: #fff0f0;
+  --success-bg: #eaf6ef;
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  background: #0d1523;
+  color: #d8e5f5;
+  --page-bg: #0d1523;
+  --surface: #162235;
+  --surface-soft: #1c2a3f;
+  --border: #2e3e55;
+  --text-primary: #ecf3ff;
+  --text-secondary: #bfd0e4;
+  --text-muted: #9aafc9;
+  --selected-bg: #1f395a;
+  --danger-bg: #42262c;
+  --success-bg: #193a34;
+}
+html[data-theme="dark"] body { background: var(--page-bg); color: var(--text-primary); }
