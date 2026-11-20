@@ -1,8 +1,10 @@
 from __future__ import annotations
+import json
 import os
 import subprocess
 import sys
 import threading
+from collections import deque
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
@@ -18,6 +20,8 @@ from app.db.models import Auction
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
+from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
+from app.tender_jobs import latest_tender_run_files
 from app.tender_api import router as tenders_router
 
 app = FastAPI(title="SetadScope API", version="0.5.0")
@@ -47,34 +51,60 @@ ORDER_FIELDS = {
 
 COLLECTION_START_PAGE = 1
 COLLECTION_END_PAGE = 37
+PROGRESS_PREFIX = "PROGRESS_JSON:"
+COLLECTION_KINDS = ("auctions", "tenders")
 collection_lock = threading.Lock()
-collection_state = {
-    "status": "idle",
-    "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
-    "started_at": None,
-    "finished_at": None,
-    "totals": None,
-    "error": None,
-    "output": None,
-}
 
 
-def update_collection_state(**values) -> None:
+def initial_collection_state(kind: str) -> dict:
+    return {
+        "kind": kind,
+        "status": "idle",
+        "phase": "idle",
+        "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
+        "started_at": None,
+        "finished_at": None,
+        "current_page": 0,
+        "total_pages": COLLECTION_END_PAGE if kind == "auctions" else None,
+        "pages_completed": 0,
+        "records_fetched": 0,
+        "records_total": None,
+        "records_stored": 0,
+        "records_skipped": 0,
+        "progress_percent": 0,
+        "totals": None,
+        "error": None,
+        "output": None,
+    }
+
+
+collection_states = {kind: initial_collection_state(kind) for kind in COLLECTION_KINDS}
+
+
+def update_collection_state(collection_kind: str, **values) -> dict:
     with collection_lock:
-        collection_state.update(values)
+        collection_states[collection_kind].update(values)
+        return dict(collection_states[collection_kind])
 
 
-def run_collection_job() -> None:
+def run_collection_job(kind: str) -> None:
     started_at = datetime.now(timezone.utc).isoformat()
-    update_collection_state(
-        status="collecting",
-        message=f"در حال دریافت صفحات {COLLECTION_START_PAGE} تا {COLLECTION_END_PAGE} از ستاد...",
-        started_at=started_at,
-        finished_at=None,
-        totals=None,
-        error=None,
-        output=None,
+    initial = initial_collection_state(kind)
+    initial.update(
+        {
+            "status": "collecting",
+            "phase": "collecting",
+            "message": (
+                "در حال دریافت صفحات مزایده‌ها..."
+                if kind == "auctions"
+                else "در حال اتصال به سامانه مناقصه‌ها و شناسایی تعداد صفحات..."
+            ),
+            "started_at": started_at,
+        }
     )
+    update_collection_state(kind, **initial)
+
+    output_lines: deque[str] = deque(maxlen=100)
     try:
         project_root = Path(__file__).resolve().parents[2]
         env = os.environ.copy()
@@ -85,55 +115,130 @@ def run_collection_job() -> None:
         ]
         env["PYTHONPATH"] = os.pathsep.join(value for value in python_paths if value)
 
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "setad_scope.collectors.fetch_main_estate",
+        if kind == "auctions":
+            module = "setad_scope.collectors.fetch_main_estate"
+            collector_args = [
                 "--start-page",
                 str(COLLECTION_START_PAGE),
                 "--end-page",
                 str(COLLECTION_END_PAGE),
-            ],
+                "--delay",
+                "1",
+            ]
+        else:
+            module = "setad_scope.collectors.fetch_tenders"
+            collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.5"]
+
+        process = subprocess.Popen(
+            [sys.executable, "-u", "-m", module, *collector_args],
             cwd=project_root,
             env=env,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
-            timeout=1800,
-            check=False,
+            bufsize=1,
         )
-        output = (result.stdout or "")[-5000:]
-        if result.returncode != 0:
-            detail = (result.stderr or result.stdout or "Collector failed.")[-3000:]
-            raise RuntimeError(detail)
+
+        if process.stdout is not None:
+            for raw_line in process.stdout:
+                line = raw_line.rstrip()
+                if not line:
+                    continue
+                output_lines.append(line)
+                if line.startswith(PROGRESS_PREFIX):
+                    try:
+                        progress = json.loads(line[len(PROGRESS_PREFIX):])
+                    except json.JSONDecodeError:
+                        continue
+                    update_collection_state(
+                        kind,
+                        status="collecting",
+                        phase=progress.get("phase", "collecting"),
+                        message=progress.get("message", "در حال دریافت اطلاعات..."),
+                        current_page=progress.get("current_page", 0),
+                        total_pages=progress.get("total_pages"),
+                        pages_completed=progress.get("pages_completed", 0),
+                        records_fetched=progress.get("records_fetched", 0),
+                        records_total=progress.get("records_total"),
+                        progress_percent=min(int(progress.get("progress_percent", 0)), 85),
+                    )
+
+        return_code = process.wait()
+        output = "\n".join(output_lines)[-5000:]
+        if return_code != 0:
+            raise RuntimeError(output or f"{kind} collector exited with code {return_code}")
 
         update_collection_state(
+            kind,
             status="importing",
-            message="دریافت صفحات تمام شد؛ در حال فیلتر کلیدواژه‌ها و ذخیره در PostgreSQL...",
+            phase="importing",
+            message="دریافت صفحات تمام شد؛ در حال پردازش و ذخیره در PostgreSQL...",
+            progress_percent=85,
             output=output,
         )
-        files = latest_run_files(RAW_DIR)
+
+        if kind == "auctions":
+            files = latest_run_files(RAW_DIR)
+        else:
+            files = latest_tender_run_files(TENDER_RAW_DIR)
+
         if not files:
-            raise RuntimeError("Collector completed but no raw page files were found.")
+            raise RuntimeError("Collector completed but no raw response page files were found.")
+
+        def report_import_progress(progress: dict) -> None:
+            completed = int(progress.get("pages_completed", 0))
+            total = max(int(progress.get("total_pages", 0)), 1)
+            percent = 85 + int(15 * completed / total)
+            update_collection_state(
+                kind,
+                status="importing",
+                phase="importing",
+                message=f"ذخیره صفحه {completed} از {total} در PostgreSQL...",
+                current_page=completed,
+                total_pages=total,
+                pages_completed=completed,
+                records_fetched=int(progress.get("fetched", 0)),
+                records_stored=int(progress.get("stored", 0)),
+                records_skipped=int(
+                    progress.get("skipped_missing_id", 0)
+                    + progress.get("skipped_invalid_record", 0)
+                    + progress.get("skipped_expired", 0)
+                ),
+                progress_percent=min(percent, 99),
+            )
 
         with SessionLocal() as session:
-            totals = import_pages(session, files)
+            if kind == "auctions":
+                totals = import_pages(session, files, progress_callback=report_import_progress)
+            else:
+                totals = import_tender_pages(session, files, progress_callback=report_import_progress)
 
+        records_fetched = int(totals.get("fetched", 0))
+        records_stored = int(totals.get("stored", 0))
+        records_skipped = max(records_fetched - records_stored, 0)
         update_collection_state(
+            kind,
             status="completed",
+            phase="completed",
             message="جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد.",
+            progress_percent=100,
+            records_fetched=records_fetched,
+            records_stored=records_stored,
+            records_skipped=records_skipped,
             totals=totals,
             finished_at=datetime.now(timezone.utc).isoformat(),
             output=output,
         )
     except Exception as exc:
         update_collection_state(
+            kind,
             status="failed",
+            phase="failed",
             message="اجرای جمع‌آوری با خطا مواجه شد.",
             error=str(exc)[-3000:],
             finished_at=datetime.now(timezone.utc).isoformat(),
+            output="\n".join(output_lines)[-5000:],
         )
-
 
 def excel_safe(value):
     """Prevent untrusted Setad strings being interpreted as spreadsheet formulas."""
@@ -198,33 +303,48 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok", "database": "ok"}
 
 
-@app.get("/api/collection/status")
-def get_collection_status():
+@app.get("/api/collection/{kind}/status")
+def get_collection_status(kind: Literal["auctions", "tenders"]):
     with collection_lock:
-        return dict(collection_state)
+        return dict(collection_states[kind])
+
+
+@app.post("/api/collection/{kind}/run", status_code=202)
+def start_collection(
+    kind: Literal["auctions", "tenders"],
+    background_tasks: BackgroundTasks,
+):
+    with collection_lock:
+        state = collection_states[kind]
+        if state["status"] in {"collecting", "importing"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A {kind} collection job is already running.",
+            )
+        collection_states[kind] = initial_collection_state(kind)
+        collection_states[kind].update(
+            {
+                "status": "collecting",
+                "phase": "collecting",
+                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        response_state = dict(collection_states[kind])
+
+    background_tasks.add_task(run_collection_job, kind)
+    return response_state
+
+
+# Backward-compatible aliases: the old untyped endpoints continue to target auctions.
+@app.get("/api/collection/status")
+def get_auction_collection_status():
+    return get_collection_status("auctions")
 
 
 @app.post("/api/collection/run", status_code=202)
-def start_collection(background_tasks: BackgroundTasks):
-    with collection_lock:
-        if collection_state["status"] in {"collecting", "importing"}:
-            raise HTTPException(
-                status_code=409,
-                detail="A collection job is already running.",
-            )
-        collection_state.update(
-            {
-                "status": "collecting",
-                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "finished_at": None,
-                "totals": None,
-                "error": None,
-                "output": None,
-            }
-        )
-    background_tasks.add_task(run_collection_job)
-    return get_collection_status()
+def start_auction_collection(background_tasks: BackgroundTasks):
+    return start_collection("auctions", background_tasks)
 
 
 @app.get("/api/auctions")

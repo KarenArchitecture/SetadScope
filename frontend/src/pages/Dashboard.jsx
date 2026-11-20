@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity,
   AlertCircle,
+  ArrowDownToLine,
   Building2,
-  CalendarDays,
   CheckCircle2,
   CircleDollarSign,
   Database,
@@ -28,7 +28,7 @@ import ListingTable from "../components/ListingTable";
 import "./Dashboard.css";
 
 const PAGE_SIZE = 20;
-const COLLECTION_ACTIVE_STATES = new Set(["collecting", "importing"]);
+const ACTIVE_STATES = new Set(["collecting", "importing"]);
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -50,10 +50,87 @@ function StatCard({ icon: Icon, label, value, hint, tone = "blue" }) {
   );
 }
 
-function DetailModal({ record, type, loading, onClose }) {
+function CollectionProgress({ state, kind }) {
+  if (!state || state.status === "idle") return null;
+
+  const isTender = kind === "tenders";
+  const active = ACTIVE_STATES.has(state.status);
+  const percent = Math.max(0, Math.min(100, Number(state.progress_percent || 0)));
+  const statusLabel = state.status === "completed"
+    ? "با موفقیت تکمیل شد"
+    : state.status === "failed"
+      ? "اجرای ناموفق"
+      : state.status === "importing"
+        ? "در حال ذخیره در پایگاه داده"
+        : "در حال دریافت از سامانه ستاد";
+
+  return (
+    <section className={"collection-progress " + (state.status === "failed" ? "collection-progress--failed" : "")}>
+      <div className="collection-progress__top">
+        <div>
+          <span className="eyebrow">{isTender ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها"}</span>
+          <strong>{statusLabel}</strong>
+        </div>
+        <span className="collection-progress__percent">{formatNumber(percent)}٪</span>
+      </div>
+
+      <div
+        className="collection-progress__track"
+        role="progressbar"
+        aria-label="پیشرفت جمع‌آوری اطلاعات"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={percent}
+      >
+        <div
+          className={"collection-progress__fill " + (active ? "collection-progress__fill--active" : "")}
+          style={{ width: (active && percent === 0 ? 2 : percent) + "%" }}
+        />
+      </div>
+
+      <p className="collection-progress__message">{state.message}</p>
+
+      <div className="collection-progress__metrics">
+        <span>
+          <strong>{formatNumber(state.pages_completed || 0)}</strong>
+          {" / "}
+          {formatNumber(state.total_pages)}
+          {" صفحه"}
+        </span>
+        <span>
+          <strong>{formatNumber(state.records_fetched || 0)}</strong>
+          {state.records_total
+            ? " / " + formatNumber(state.records_total) + " رکورد دریافت‌شده"
+            : " رکورد دریافت‌شده"}
+        </span>
+        <span>
+          <strong>{formatNumber(state.records_stored || 0)}</strong>
+          {" رکورد ذخیره‌شده"}
+        </span>
+      </div>
+
+      {state.status === "failed" && state.error && (
+        <details className="collection-progress__error">
+          <summary>نمایش جزئیات خطا</summary>
+          <pre>{state.error}</pre>
+        </details>
+      )}
+
+      {state.status === "completed" && state.totals && (
+        <div className="collection-progress__summary">
+          <CheckCircle2 size={16} />
+          {formatNumber(state.totals.fetched)} رکورد بررسی شد؛
+          {" "}{formatNumber(state.totals.stored)} رکورد ذخیره شد.
+        </div>
+      )}
+    </section>
+  );
+}
+
+function DetailModal({ record, kind, loading, onClose }) {
   if (!record && !loading) return null;
 
-  const isTender = type === "tenders";
+  const isTender = kind === "tenders";
   const fields = record
     ? isTender
       ? [
@@ -102,6 +179,7 @@ function DetailModal({ record, type, loading, onClose }) {
             <X size={19} />
           </button>
         </header>
+
         {loading ? (
           <div className="modal-loading"><LoaderCircle className="spin" /> در حال دریافت جزئیات...</div>
         ) : (
@@ -145,8 +223,9 @@ function DetailModal({ record, type, loading, onClose }) {
   );
 }
 
-export default function Dashboard() {
-  const [activeTab, setActiveTab] = useState("auctions");
+export default function Dashboard({ kind, onNavigate }) {
+  const isTender = kind === "tenders";
+  const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [result, setResult] = useState({ items: [], page: 1, pages: 0, total: 0 });
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
@@ -157,12 +236,13 @@ export default function Dashboard() {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
+  const lastRefreshedRun = useRef(null);
 
-  async function loadPage(nextPage = page, nextSearch = search, nextType = activeTab) {
+  const loadPage = useCallback(async (nextPage = 1, nextSearch = "") => {
     setLoading(true);
     setError("");
     try {
-      const fetchPage = nextType === "tenders" ? getTenders : getAuctions;
+      const fetchPage = isTender ? getTenders : getAuctions;
       const data = await fetchPage({
         search: nextSearch,
         page: nextPage,
@@ -178,63 +258,57 @@ export default function Dashboard() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [isTender]);
 
   useEffect(() => {
-    loadPage(1, search, activeTab);
-  }, [activeTab]);
-
-  useEffect(() => {
+    loadPage(1, "");
     getApiHealth().then(() => setApiOnline(true)).catch(() => setApiOnline(false));
-    getCollectionStatus().then(setCollectionState).catch(() => {});
-  }, []);
+    getCollectionStatus(kind).then(setCollectionState).catch(() => {});
+  }, [kind, loadPage]);
 
   useEffect(() => {
-    if (!COLLECTION_ACTIVE_STATES.has(collectionState.status)) return undefined;
+    if (!ACTIVE_STATES.has(collectionState.status)) return undefined;
 
     let cancelled = false;
-    let timer;
-    const pollStatus = async () => {
+    let requestInFlight = false;
+    const timer = window.setInterval(async () => {
+      if (requestInFlight) return;
+      requestInFlight = true;
       try {
-        const status = await getCollectionStatus();
+        const nextState = await getCollectionStatus(kind);
         if (cancelled) return;
-        setCollectionState(status);
 
-        if (status.status === "completed") {
-          if (activeTab === "auctions") await loadPage(1, search, "auctions");
-          if (timer) window.clearInterval(timer);
-        } else if (status.status === "failed" && timer) {
-          window.clearInterval(timer);
+        setCollectionState(nextState);
+        if (
+          nextState.status === "completed" &&
+          nextState.finished_at &&
+          lastRefreshedRun.current !== nextState.finished_at
+        ) {
+          lastRefreshedRun.current = nextState.finished_at;
+          await loadPage(1, search);
         }
       } catch {
-        if (!cancelled) setError("دریافت وضعیت اجرای Collector ناموفق بود.");
+        if (!cancelled) setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
+      } finally {
+        requestInFlight = false;
       }
-    };
+    }, 1000);
 
-    timer = window.setInterval(pollStatus, 1800);
-    pollStatus();
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, activeTab, search]);
-
-  const visibleRange = useMemo(() => {
-    if (!result.total) return "۰";
-    const from = (result.page - 1) * PAGE_SIZE + 1;
-    const to = Math.min(result.page * PAGE_SIZE, result.total);
-    return formatNumber(from) + " تا " + formatNumber(to);
-  }, [result.page, result.total]);
+  }, [collectionState.status, kind, loadPage, search]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
-  const fourthStat = activeTab === "auctions"
-    ? result.items.filter((item) => item.state === "PUBLISHED").length
-    : new Set(result.items.map((item) => item.type_name).filter(Boolean)).size;
-  const collectionRunning = COLLECTION_ACTIVE_STATES.has(collectionState.status);
+  const fourthStat = isTender
+    ? new Set(result.items.map((item) => item.type_name).filter(Boolean)).size
+    : result.items.filter((item) => item.state === "PUBLISHED").length;
+  const collectionRunning = ACTIVE_STATES.has(collectionState.status);
 
   const columns = useMemo(() => {
-    if (activeTab === "tenders") {
+    if (isTender) {
       return [
         {
           key: "title",
@@ -313,24 +387,24 @@ export default function Dashboard() {
         ),
       },
     ];
-  }, [activeTab]);
+  }, [isTender]);
 
   async function handleSearch(event) {
     event.preventDefault();
     const nextSearch = searchInput.trim();
     setSearch(nextSearch);
-    await loadPage(1, nextSearch, activeTab);
+    await loadPage(1, nextSearch);
   }
 
   async function handleCollection() {
     setError("");
     try {
-      const status = await startCollection();
-      setCollectionState(status);
+      const nextState = await startCollection(kind);
+      setCollectionState(nextState);
     } catch (requestError) {
       setError(
         requestError.response?.data?.detail ||
-          "شروع جمع‌آوری مزایده‌ها ناموفق بود. وضعیت Backend را بررسی کن.",
+          ("شروع جمع‌آوری " + (isTender ? "مناقصه‌ها" : "مزایده‌ها") + " ناموفق بود."),
       );
     }
   }
@@ -339,9 +413,7 @@ export default function Dashboard() {
     setSelectedRecord(null);
     setDetailLoading(true);
     try {
-      const data = activeTab === "tenders"
-        ? await getTenderById(id)
-        : await getAuctionById(id);
+      const data = isTender ? await getTenderById(id) : await getAuctionById(id);
       setSelectedRecord(data);
     } catch {
       setError("دریافت جزئیات آگهی ناموفق بود.");
@@ -350,43 +422,41 @@ export default function Dashboard() {
     }
   }
 
-  let collectionMessage = "";
-  if (collectionState.status === "collecting") {
-    collectionMessage = "در حال دریافت صفحات مزایده‌ها...";
-  } else if (collectionState.status === "importing") {
-    collectionMessage = "دریافت تمام شد؛ در حال فیلتر و ذخیره اطلاعات...";
-  } else if (collectionState.status === "completed" && collectionState.totals) {
-    const totals = collectionState.totals;
-    collectionMessage = "موفق: " + formatNumber(totals.fetched) + " دریافت، " +
-      formatNumber(totals.stored) + " ذخیره";
-  } else if (collectionState.status === "failed") {
-    collectionMessage = collectionState.error || "اجرای جمع‌آوری ناموفق بود.";
-  }
-
-  const isTender = activeTab === "tenders";
+  const exportHref = search
+    ? "/api/" + kind + "/export.xlsx?search=" + encodeURIComponent(search)
+    : "/api/" + kind + "/export.xlsx";
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
-        <a className="brand" href="#dashboard" aria-label="SetadScope">
+        <a
+          className="brand"
+          href="/auctions"
+          onClick={(event) => { event.preventDefault(); onNavigate("/auctions"); }}
+          aria-label="SetadScope"
+        >
           <span className="brand__mark"><Activity size={22} /></span>
           <span className="brand__name">Setad<span>Scope</span></span>
         </a>
 
         <div className="sidebar__section-label">فضای کاری</div>
-        <nav className="sidebar-nav">
-          <button
+        <nav className="sidebar-nav" aria-label="بخش‌های سامانه">
+          <a
+            href="/auctions"
             className={"sidebar-nav__item " + (!isTender ? "sidebar-nav__item--active" : "")}
-            onClick={() => setActiveTab("auctions")}
+            aria-current={!isTender ? "page" : undefined}
+            onClick={(event) => { event.preventDefault(); onNavigate("/auctions"); }}
           >
             <Gavel size={18} /> مزایده‌ها
-          </button>
-          <button
+          </a>
+          <a
+            href="/tenders"
             className={"sidebar-nav__item " + (isTender ? "sidebar-nav__item--active" : "")}
-            onClick={() => setActiveTab("tenders")}
+            aria-current={isTender ? "page" : undefined}
+            onClick={(event) => { event.preventDefault(); onNavigate("/tenders"); }}
           >
             <FileText size={18} /> مناقصه‌ها
-          </button>
+          </a>
           <span className="sidebar-nav__item sidebar-nav__item--muted">
             <Database size={18} /> منابع داده <small>به‌زودی</small>
           </span>
@@ -396,10 +466,10 @@ export default function Dashboard() {
           <div className="pipeline-card">
             <span className="pipeline-card__icon"><FileSearch size={17} /></span>
             <strong>وضعیت پردازش</strong>
-            <p>داده‌ها در مرحله جمع‌آوری و یکپارچه‌سازی اولیه هستند.</p>
+            <p>داده‌های هر بخش مستقل جمع‌آوری و در PostgreSQL ذخیره می‌شوند.</p>
             <span className="pipeline-card__status"><span /> بدون تحلیل هوش مصنوعی</span>
           </div>
-          <div className="sidebar__version">SETADSCOPE · نسخه ۰.۲</div>
+          <div className="sidebar__version">SETADSCOPE · نسخه ۰.۳</div>
         </div>
       </aside>
 
@@ -417,30 +487,31 @@ export default function Dashboard() {
           <section className="page-heading">
             <div>
               <span className="eyebrow">مرکز پایش معاملات</span>
-              <h1>{isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها"}</h1>
-              <p>اطلاعات استخراج‌شده از سامانه تدارکات الکترونیکی دولت</p>
+              <h1>{pageTitle}</h1>
+              <p>
+                {isTender
+                  ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
+                  : "آگهی‌های مزایده از زیرسامانه مستقل مزایده‌های ستاد"}
+              </p>
             </div>
-            {!isTender && (
-              <div className="page-heading__actions">
-                <button
-                  className="button button--primary"
-                  onClick={handleCollection}
-                  disabled={collectionRunning}
-                >
-                  {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                  {collectionRunning ? "در حال اجرا..." : "جمع‌آوری مزایده‌ها"}
-                </button>
-                {collectionMessage && (
-                  <span
-                    className={"collection-feedback " + (collectionState.status === "failed" ? "collection-feedback--error" : "")}
-                    title={collectionState.status === "failed" ? collectionMessage : undefined}
-                  >
-                    {collectionMessage}
-                  </span>
-                )}
-              </div>
-            )}
+            <div className="page-heading__actions">
+              <button
+                className="button button--primary"
+                onClick={handleCollection}
+                disabled={collectionRunning}
+              >
+                {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
+                {collectionRunning
+                  ? "در حال اجرا..."
+                  : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : "مزایده‌ها")}
+              </button>
+              <a className="button button--secondary" href={exportHref}>
+                <ArrowDownToLine size={16} /> خروجی Excel
+              </a>
+            </div>
           </section>
+
+          <CollectionProgress state={collectionState} kind={kind} />
 
           <section className="notice-banner">
             <div className="notice-banner__icon"><AlertCircle size={19} /></div>
@@ -448,8 +519,8 @@ export default function Dashboard() {
               <strong>داده خام — هنوز تحلیل تجاری نشده</strong>
               <p>
                 {isTender
-                  ? "رکوردهای مناقصه با شناسه منبع یکتا ذخیره می‌شوند. تاریخ‌های شمسی و پاسخ کامل هر رکورد بدون تبدیل در JSONB نگهداری می‌شوند."
-                  : "اطلاعات مزایده‌ها استخراج و یکپارچه‌سازی اولیه شده‌اند. دسته‌بندی تجاری و پیشنهاد فرصت‌های مرتبط هنوز انجام نشده است."}
+                  ? "اطلاعات مناقصه‌ها مستقل از مزایده‌ها دریافت می‌شوند. تاریخ‌های شمسی و پاسخ کامل هر رکورد بدون تبدیل در JSONB نگهداری می‌شوند."
+                  : "اطلاعات مزایده‌ها مستقل از مناقصه‌ها دریافت می‌شوند. فیلتر کلیدواژه‌ها در مرحله ورود به پایگاه داده اعمال می‌شود."}
               </p>
             </div>
           </section>
@@ -472,29 +543,10 @@ export default function Dashboard() {
             />
           </section>
 
-          <div className="listing-tabs" role="tablist" aria-label="نوع آگهی">
-            <button
-              role="tab"
-              aria-selected={!isTender}
-              className={!isTender ? "listing-tabs__button listing-tabs__button--active" : "listing-tabs__button"}
-              onClick={() => setActiveTab("auctions")}
-            >
-              <Gavel size={16} /> مزایده‌ها
-            </button>
-            <button
-              role="tab"
-              aria-selected={isTender}
-              className={isTender ? "listing-tabs__button listing-tabs__button--active" : "listing-tabs__button"}
-              onClick={() => setActiveTab("tenders")}
-            >
-              <FileText size={16} /> مناقصه‌ها
-            </button>
-          </div>
-
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
             title={isTender ? "فهرست مناقصه‌ها" : "فهرست مزایده‌ها"}
-            tag={<><Database size={14} /> داده خام</>}
+            tag="داده خام"
             columns={columns}
             items={result.items}
             loading={loading}
@@ -502,7 +554,7 @@ export default function Dashboard() {
             pages={result.pages}
             total={result.total}
             pageSize={PAGE_SIZE}
-            onPageChange={(nextPage) => loadPage(nextPage, search, activeTab)}
+            onPageChange={(nextPage) => loadPage(nextPage, search)}
             onDetails={openDetails}
             searchInput={searchInput}
             onSearchInput={setSearchInput}
@@ -511,7 +563,7 @@ export default function Dashboard() {
               ? "جست‌وجو در عنوان، شماره، سازمان یا شرح مناقصه..."
               : "جست‌وجو در عنوان، سازمان یا شهر..."}
             error={error}
-            onRetry={() => loadPage(page, search, activeTab)}
+            onRetry={() => loadPage(page, search)}
           />
 
           <footer className="dashboard-footer">
@@ -524,7 +576,7 @@ export default function Dashboard() {
       {(selectedRecord || detailLoading) && (
         <DetailModal
           record={selectedRecord}
-          type={activeTab}
+          kind={kind}
           loading={detailLoading}
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />

@@ -33,6 +33,29 @@ The import is idempotent: the same source tender ID updates its existing row rat
 - GET /api/tenders/{id}: tender detail including the raw JSONB payload.
 - GET /api/tenders/export.xlsx: Excel export.
 
-## Collector follow-up
+## Automated collector
 
-The uploaded JSON body does not contain the URL or HTTP method used to retrieve it. The public page URL alone is not enough to reconstruct the request safely. Before adding a scheduled collector, capture the successful XHR/fetch request in browser DevTools (Request URL, method, query/form payload, and required public headers). The existing auction collector must remain unchanged.
+The request URL and method supplied from browser DevTools confirmed the public listing request:
+
+- Method: GET
+- Endpoint: https://etend.setadiran.ir/etend/callMainPageCartable-anonymous.action
+- Query: struts.token.name=csrf_token, csrf_token, _search=false, nd, rows, page, sidx, sord, and cache-buster _.
+
+The collector does not embed the CSRF token from a browser capture. It creates a new requests session, opens the tender landing page, extracts the current token from the HTML or session cookies, and sends the listing request with the same session. The landing URL can be overridden with SETAD_TENDER_LANDING_URL if the portal changes its entry route.
+
+The first successful page determines the server-reported page count and record count. Unless an explicit end page is supplied, the collector fetches every page reported by the server. Each response is preserved unchanged in data/raw/tenders/; the import is then upserted by source tender ID.
+
+Run both steps manually:
+
+```powershell
+docker compose run --rm api python -m setad_scope.collectors.fetch_tenders
+docker compose run --rm api python -m app.tender_jobs
+```
+
+Or use .\setad.ps1 collect-tenders.
+
+## Progress reporting
+
+The collector emits structured progress after each page. FastAPI streams these progress events from the collector process into an independent in-memory status object for auctions and tenders. The dashboard polls the matching status endpoint while that job is active.
+
+Progress is split into two phases: fetching (0–85%) and PostgreSQL import (85–100%). The UI displays page counts, fetched record counts, stored counts, errors, and the final totals.

@@ -65,7 +65,7 @@ def project_tender_record(record: dict[str, Any]) -> tuple[dict[str, Any] | None
     }, "ready"
 
 
-def import_tender_pages(db: Session, paths: list[Path]) -> dict[str, int]:
+def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) -> dict[str, int]:
     """Import every row in the supplied response pages, updating known tender IDs."""
     totals = {
         "fetched": 0,
@@ -74,7 +74,9 @@ def import_tender_pages(db: Session, paths: list[Path]) -> dict[str, int]:
         "skipped_invalid_record": 0,
     }
 
-    for path in sorted(paths):
+    ordered_paths = sorted(paths)
+    total_pages = len(ordered_paths)
+    for page_index, path in enumerate(ordered_paths, start=1):
         payload = json.loads(path.read_text(encoding="utf-8"))
         records = payload.get("gridModel") if isinstance(payload, dict) else None
         if not isinstance(records, list):
@@ -106,5 +108,11 @@ def import_tender_pages(db: Session, paths: list[Path]) -> dict[str, int]:
             totals["stored"] += 1
 
         db.commit()
+        if progress_callback:
+            progress_callback({
+                "pages_completed": page_index,
+                "total_pages": total_pages,
+                **totals,
+            })
 
     return totals

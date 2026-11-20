@@ -1,7 +1,7 @@
 [CmdletBinding()]
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("start", "stop", "restart", "rebuild", "status", "logs", "collect", "build", "help")]
+    [ValidateSet("start", "stop", "restart", "rebuild", "status", "logs", "collect", "collect-tenders", "build", "help")]
     [string]$Command = "help",
 
     [ValidateRange(1, 2147483647)]
@@ -36,6 +36,7 @@ function Show-Help {
     Write-Host "  .\setad.ps1 logs                  Follow service logs (Ctrl+C to stop)"
     Write-Host "  .\setad.ps1 collect               Fetch all 37 pages and import latest run"
     Write-Host "  .\setad.ps1 collect -StartPage 1 -EndPage 5"
+    Write-Host "  .\setad.ps1 collect-tenders     Fetch all tender pages and import them"
     Write-Host "  .\setad.ps1 build                 Build images without starting services"
     Write-Host ""
 }
@@ -85,6 +86,14 @@ try {
         }
         "build" {
             Invoke-Compose -ComposeArgs @("build")
+        }
+        "collect-tenders" {
+            New-Item -ItemType Directory -Force -Path "data/raw/tenders" | Out-Null
+            Invoke-Compose -ComposeArgs @("up", "-d", "--build")
+            Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_tenders")
+            Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "app.tender_jobs")
+            Write-Host "Tender collection and database import completed." -ForegroundColor Green
+            Write-Host "Refresh http://localhost:5173/tenders to view the tender listings."
         }
         "collect" {
             if ($EndPage -lt $StartPage) {

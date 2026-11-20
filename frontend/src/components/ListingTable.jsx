@@ -1,4 +1,4 @@
-import { ArrowLeft, CalendarDays, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react";
+import { ArrowLeft, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react";
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";

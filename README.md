@@ -50,12 +50,14 @@ Run these from the repository root:
 .\setad.ps1 logs
 .\setad.ps1 collect
 .\setad.ps1 collect -StartPage 1 -EndPage 5
+.\setad.ps1 collect-tenders
 ```
 
 - `stop` stops containers but preserves the named PostgreSQL volume.
 - `restart` restarts existing containers without rebuilding images.
 - `rebuild` rebuilds images and recreates services after code or dependency changes.
-- `collect` fetches pages 1–37 (the currently reported full listing) into `data/raw`, then imports only keyword-matched records from the latest run into PostgreSQL. Deadline filtering is intentionally disabled for this delivery; Jalali dates remain in the raw source payload until date parsing is implemented.
+- `collect` fetches auction pages 1–37 into `data/raw`, then imports only keyword-matched records from the latest run into PostgreSQL.
+- `collect-tenders` fetches tender pages using the total page count reported by the Setad response, then imports the latest run into the separate `tenders` table. Deadline filtering is intentionally disabled for this delivery; Jalali dates remain in the raw source payload until date parsing is implemented.
 - To re-import every saved raw page snapshot manually: `docker compose run --rm ingest --all`.
 
 If PowerShell blocks script execution, run the current command in a PowerShell session with an appropriate execution policy, for example:
@@ -85,15 +87,15 @@ The importer expects response pages under data/raw/tenders/ named tender_page_*.
 
 After saving response pages in that folder, run:
 
-\`\`\`powershell
+```powershell
 docker compose run --rm api python -m app.tender_jobs
-\`\`\`
+```
 
 To re-import every saved snapshot:
 
-\`\`\`powershell
+```powershell
 docker compose run --rm api python -m app.tender_jobs --all
-\`\`\`
+```
 
 Tender API endpoints:
 
@@ -101,4 +103,21 @@ Tender API endpoints:
 - GET /api/tenders/{id} (includes the retained raw_payload)
 - GET /api/tenders/export.xlsx
 
-The source dates currently arrive as Jalali strings (for example, 1405/09/17 14:30:00). They are stored unchanged as text; no Gregorian conversion or date-based active/archive filtering is applied. The automated tender-page fetcher is intentionally not wired yet because the uploaded response body does not identify the exact AJAX endpoint or request method. Do not guess that endpoint; capture it from the browser Network panel before implementing the collector.
+The source dates currently arrive as Jalali strings (for example, 1405/09/17 14:30:00). They are stored unchanged as text; no Gregorian conversion or date-based active/archive filtering is applied. The automated tender-page collector is implemented using the confirmed GET endpoint. It creates a fresh HTTP session and obtains the current CSRF token from the landing page; the token captured in DevTools is never hard-coded.
+
+
+## Separate auction and tender workspaces
+
+The dashboard has two independent routes:
+
+- http://localhost:5173/auctions — auction records, auction collector, auction progress.
+- http://localhost:5173/tenders — tender records, tender collector, tender progress.
+
+Each page has its own search state, table, export, collection status, and collection action. The two collection jobs can run independently.
+
+The tender collector calls the confirmed public listing endpoint:
+`https://etend.setadiran.ir/etend/callMainPageCartable-anonymous.action`
+
+It obtains a fresh CSRF token from the tender landing page within the same HTTP session. The token is not stored in source code or raw snapshots. The collector reads the total page count and record count from the first response, then follows the server-reported pagination.
+
+The dashboard polls the matching collection status endpoint once per second while a job is running. Progress covers both fetching (0–85%) and database import (85–100%), including completed pages, fetched rows, and stored rows.

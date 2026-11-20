@@ -17,6 +17,11 @@ ENDPOINT = f"{BASE_URL}/eauc/mainEstate-Load.action"
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 MAX_RETRIES = 3
+PROGRESS_PREFIX = "PROGRESS_JSON:"
+
+
+def emit_progress(**values: Any) -> None:
+    print(PROGRESS_PREFIX + json.dumps(values, ensure_ascii=False), flush=True)
 
 
 def create_session() -> requests.Session:
@@ -121,6 +126,17 @@ def main() -> int:
     total_rows_saved = 0
     page_summaries: list[dict[str, Any]] = []
 
+    emit_progress(
+        phase="collecting",
+        current_page=0,
+        total_pages=args.end_page - args.start_page + 1,
+        pages_completed=0,
+        records_fetched=0,
+        records_total=None,
+        progress_percent=0,
+        message="در حال اتصال به سامانه مزایده‌ها...",
+    )
+
     try:
         session = create_session()
         for page in range(args.start_page, args.end_page + 1):
@@ -146,6 +162,16 @@ def main() -> int:
 
             seen_keys.update(page_keys)
             total_rows_saved += len(items)
+            emit_progress(
+                phase="collecting",
+                current_page=page,
+                total_pages=args.end_page - args.start_page + 1,
+                pages_completed=len(page_summaries) + 1,
+                records_fetched=total_rows_saved,
+                records_total=payload.get("records"),
+                progress_percent=int(85 * (page - args.start_page + 1) / (args.end_page - args.start_page + 1)),
+                message=f"صفحه {page} از {args.end_page} دریافت شد.",
+            )
 
             summary = {
                 "requested_page": page,

@@ -95,7 +95,12 @@ def project_record(record: dict, now: datetime | None = None) -> tuple[dict | No
     }, "matched"
 
 
-def import_pages(db: Session, paths: list[Path], now: datetime | None = None) -> dict[str, int]:
+def import_pages(
+    db: Session,
+    paths: list[Path],
+    now: datetime | None = None,
+    progress_callback=None,
+) -> dict[str, int]:
     now = now or datetime.now(timezone.utc)
     totals = {
         "fetched": 0,
@@ -109,7 +114,8 @@ def import_pages(db: Session, paths: list[Path], now: datetime | None = None) ->
     db.commit()
     run_id = run.id
     try:
-        for path in paths:
+        total_pages = len(paths)
+        for page_index, path in enumerate(paths, start=1):
             payload = json.loads(path.read_text(encoding="utf-8"))
             records = payload.get("gridModel")
             if not isinstance(records, list):
@@ -128,6 +134,12 @@ def import_pages(db: Session, paths: list[Path], now: datetime | None = None) ->
                 db.execute(statement)
                 totals["stored"] += 1
             db.commit()
+            if progress_callback:
+                progress_callback({
+                    "pages_completed": page_index,
+                    "total_pages": total_pages,
+                    **totals,
+                })
         for key, value in totals.items():
             setattr(run, key, value)
         run.status = "success"
