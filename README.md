@@ -176,8 +176,12 @@ To run a complete category fetch and import in PowerShell:
 .\setad.ps1 collect-category -Category clearance
 ```
 
-Or use each category's **جمع‌آوری** button. Both CLI and UI use server-reported
-page counts and start from page zero for these public endpoints.
+Or use each category's **جمع‌آوری** button. Both CLI and UI use server-reported page counts. The first request follows
+the captured browser behavior (page 0). Four older eauc endpoints report
+`"page": 1` for that request, so the collector records it as page 1, then
+requests pages 2 through the reported total, avoiding duplicate first pages
+and missing final pages. The central-board endpoint uses genuine zero-based
+`pageNumber` values. Subsequent eauc page numbers are checked for consistency.
 The old `.\setad.ps1 collect` alias now runs the full movable collection.
 `.\setad.ps1 collect-tenders` remains unchanged.
 
@@ -198,3 +202,15 @@ Only the central-board clearance response explicitly labels its currency IRR.
 
 The Persian calendar year display uses `useGrouping: false` so ۱۴۰۵ is not
 rendered as ۱٬۴۰۵.
+
+
+Explicit CLI page ranges are still supported for diagnostics:
+```powershell
+.\setad.ps1 collect -StartPage 1 -EndPage 3
+.\setad.ps1 collect-category -Category clearance -StartPage 0 -EndPage 2
+```
+
+Real-time connection to the remote Setad services must be validated on a
+network that can reach those services; the automated CI suite exercises
+representative captured shapes, migrations and PostgreSQL persistence without
+making brittle calls to the live public APIs.

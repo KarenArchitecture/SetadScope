@@ -201,3 +201,39 @@ def test_failed_collect_never_marks_a_partial_snapshot_complete(tmp_path, monkey
     with pytest.raises(RuntimeError):
         collect("minor", raw_dir=root, session=Mock(), delay=0)
     assert not list(root.glob("minor_run_*.json"))
+
+
+def test_eauc_page_zero_response_one_does_not_duplicate_first_or_skip_last(tmp_path, monkeypatch):
+    """Actual eauc captures use request page=0 but return response page=1."""
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    calls = []
+
+    def fake_fetch(session, category, page, rows):
+        calls.append(page)
+        reported = 1 if page == 0 else page
+        return {"gridModel": [{"id": reported}], "page": reported, "total": 3, "records": 3}
+
+    monkeypatch.setattr(module, "fetch_page", fake_fetch)
+    root = tmp_path / "auctions" / "movable"
+    summary = collect("movable", raw_dir=root, session=Mock(), delay=0)
+
+    assert calls == [0, 2, 3]
+    assert summary["source_page_base"] == 1
+    assert summary["complete_source"] is True
+    assert summary["rows_saved"] == 3
+    assert [p["page"] for p in summary["pages"]] == [1, 2, 3]
+    assert sorted(p.name.split("_page_")[1].split("_")[0] for p in root.glob("movable_page_*.json")) == ["1", "2", "3"]
+
+
+def test_eauc_rejects_wrong_reported_page_to_prevent_missing_data(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    def fetch_wrong(session, category, page, rows):
+        return {"gridModel": [{"id": 1}], "page": 1, "total": 2, "records": 2}
+
+    monkeypatch.setattr(module, "fetch_page", fetch_wrong)
+    root = tmp_path / "auctions" / "movable"
+    with pytest.raises(RuntimeError, match="duplicate or missing pages"):
+        collect("movable", raw_dir=root, session=Mock(), delay=0)
+    assert not list(root.glob("movable_run_*.json"))

@@ -4,7 +4,7 @@ param(
     [ValidateSet("start", "stop", "restart", "rebuild", "status", "logs", "collect", "collect-tenders", "collect-category", "build", "help")]
     [string]$Command = "help",
 
-    [ValidateRange(1, 2147483647)]
+    [ValidateRange(0, 2147483647)]
     [int]$StartPage = 1,
 
     [ValidateRange(1, 2147483647)]
@@ -37,10 +37,11 @@ function Show-Help {
     Write-Host "  .\setad.ps1 rebuild               Rebuild images and recreate services"
     Write-Host "  .\setad.ps1 status                Show service status"
     Write-Host "  .\setad.ps1 logs                  Follow service logs (Ctrl+C to stop)"
-    Write-Host "  .\setad.ps1 collect               Fetch all 37 pages and import latest run"
+    Write-Host "  .\setad.ps1 collect               Fetch all movable auction pages and import"
     Write-Host "  .\setad.ps1 collect -StartPage 1 -EndPage 5"
     Write-Host "  .\setad.ps1 collect-tenders     Fetch all tender pages and import them"
     Write-Host "  .\setad.ps1 collect-category -Category rental"
+    Write-Host "  .\setad.ps1 collect-category -Category clearance"
     Write-Host "  .\setad.ps1 build                 Build images without starting services"
     Write-Host ""
 }
@@ -100,17 +101,30 @@ try {
             Write-Host "Refresh http://localhost:5173/tenders to view the tender listings."
         }
         "collect" {
-            # Legacy command: movable auctions, full server-reported pages.
             New-Item -ItemType Directory -Force -Path "data/raw/auctions/movable" | Out-Null
             Invoke-Compose -ComposeArgs @("up", "-d", "--build")
-            Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_auction_categories", "--category", "movable")
+            $FetchArgs = @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_auction_categories", "--category", "movable")
+            if ($PSBoundParameters.ContainsKey("StartPage")) {
+                $FetchArgs += @("--start-page", $StartPage.ToString())
+            }
+            if ($PSBoundParameters.ContainsKey("EndPage")) {
+                $FetchArgs += @("--end-page", $EndPage.ToString())
+            }
+            Invoke-Compose -ComposeArgs $FetchArgs
             Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "app.auction_category_jobs", "--category", "movable")
             Write-Host "Movable auctions collected and imported." -ForegroundColor Green
         }
         "collect-category" {
             New-Item -ItemType Directory -Force -Path ("data/raw/auctions/" + $Category) | Out-Null
             Invoke-Compose -ComposeArgs @("up", "-d", "--build")
-            Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_auction_categories", "--category", $Category)
+            $FetchArgs = @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_auction_categories", "--category", $Category)
+            if ($PSBoundParameters.ContainsKey("StartPage")) {
+                $FetchArgs += @("--start-page", $StartPage.ToString())
+            }
+            if ($PSBoundParameters.ContainsKey("EndPage")) {
+                $FetchArgs += @("--end-page", $EndPage.ToString())
+            }
+            Invoke-Compose -ComposeArgs $FetchArgs
             Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "app.auction_category_jobs", "--category", $Category)
             Write-Host ("Finished collecting " + $Category + " auctions.") -ForegroundColor Green
         }

@@ -158,13 +158,38 @@ def collect(
     active_session = session or create_session(category)
     first = fetch_page(active_session, category, start_page, rows)
     total_pages, total_records = page_totals(first, category, rows)
-    last = min(end_page if end_page is not None else total_pages - 1, total_pages - 1)
-    if start_page >= total_pages:
-        raise ValueError(f"start_page {start_page} exceeds the last page {total_pages - 1}")
+    # eauc browser requests page=0, but the captured response reports page=1.
+    # The server clamps page 0 to the first 1-based page. Avoid requesting
+    # page=1 again and include the final page=total_pages.
+    reported_page = first.get("page")
+    try:
+        reported_page = int(reported_page)
+    except (TypeError, ValueError):
+        reported_page = start_page
+    if category == "clearance":
+        effective_start = start_page
+        final_source_page = total_pages - 1
+    elif start_page == 0 and reported_page == 1:
+        effective_start = 1
+        final_source_page = total_pages
+    else:
+        effective_start = start_page
+        final_source_page = total_pages if reported_page >= 1 else total_pages - 1
+
+    last = min(end_page if end_page is not None else final_source_page, final_source_page)
+    if effective_start > final_source_page:
+        raise ValueError(f"start_page {start_page} exceeds the last page {final_source_page}")
 
     try:
-        for page in range(start_page, last + 1):
-            payload = first if page == start_page else fetch_page(active_session, category, page, rows)
+        for page in range(effective_start, last + 1):
+            payload = first if page == effective_start else fetch_page(active_session, category, page, rows)
+            if category != "clearance":
+                actual_page = payload.get("page")
+                if actual_page is not None and int(actual_page) != page:
+                    raise RuntimeError(
+                        f"Requested eauc page {page}, but API reported page {actual_page}; "
+                        "aborting to avoid duplicate or missing pages."
+                    )
             items = payload["content" if category == "clearance" else "gridModel"]
             path = raw_dir / f"{category}_page_{page}_{stamp}.json"
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -175,9 +200,9 @@ def collect(
                 "rows": len(items),
             })
             completed = len(page_summaries)
-            expected = last - start_page + 1
+            expected = last - effective_start + 1
             emit_progress(
-                phase="collecting", current_page=page + 1,
+                phase="collecting", current_page=completed,
                 total_pages=expected, pages_completed=completed,
                 records_fetched=total_fetched, records_total=total_records,
                 progress_percent=int(85 * completed / expected),
@@ -190,7 +215,8 @@ def collect(
             "total_pages_reported": total_pages,
             "total_records_reported": total_records,
             "rows_saved": total_fetched, "pages": page_summaries,
-            "complete_source": start_page == 0 and last == total_pages - 1,
+            "complete_source": start_page == 0 and last == final_source_page,
+            "source_page_base": final_source_page - total_pages + 1,
         }
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"FETCH SUCCESS {category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
