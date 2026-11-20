@@ -6,13 +6,13 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
-from openpyxl import Workbook
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Tender
 from app.db.session import get_db
 from app.services.date_normalization import parse_filter_bound
+from app.services.excel_export import build_excel
 
 
 router = APIRouter(tags=["tenders"])
@@ -268,39 +268,35 @@ def export_tenders(
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
-    workbook = Workbook(write_only=True)
-    sheet = workbook.create_sheet("SetadScope Tenders")
-    sheet.append(
+    query = query.order_by(ordering, Tender.id.asc())
+    headers = [
+        "شناسه منبع", "شماره مناقصه", "عنوان", "نوع فراخوان", "سازمان",
+        "استان", "شهر", "شرح", "تاریخ انتشار", "مهلت دریافت اسناد",
+        "مهلت پیشنهاد", "تاریخ بازگشایی", "وضعیت",
+    ]
+    rows = (
         [
-            "شناسه منبع", "شماره مناقصه", "عنوان", "نوع فراخوان", "سازمان",
-            "استان", "شهر", "شرح", "تاریخ انتشار", "مهلت دریافت اسناد",
-            "مهلت پیشنهاد", "تاریخ بازگشایی", "وضعیت",
+            excel_safe(row.source_tender_id),
+            excel_safe(row.tender_number),
+            excel_safe(row.title),
+            excel_safe(row.type_name),
+            excel_safe(row.organization),
+            excel_safe(row.province),
+            excel_safe(row.city),
+            excel_safe(row.description),
+            excel_safe(row.public_notification_date),
+            excel_safe(row.documents_deadline_date),
+            excel_safe(row.proposal_deadline_date),
+            excel_safe(row.opening_date),
+            excel_safe(row.state),
         ]
+        for row in db.scalars(query).yield_per(500)
+    )
+    data = build_excel(
+        "مناقصه‌ها", "SetadScopeTenders", headers, rows,
+        widths=[25, 24, 53, 28, 40, 21, 21, 66, 25, 25, 25, 25, 20],
     )
 
-    query = query.order_by(ordering, Tender.id.asc())
-    for row in db.scalars(query).yield_per(500):
-        sheet.append(
-            [
-                excel_safe(row.source_tender_id),
-                excel_safe(row.tender_number),
-                excel_safe(row.title),
-                excel_safe(row.type_name),
-                excel_safe(row.organization),
-                excel_safe(row.province),
-                excel_safe(row.city),
-                excel_safe(row.description),
-                excel_safe(row.public_notification_date),
-                excel_safe(row.documents_deadline_date),
-                excel_safe(row.proposal_deadline_date),
-                excel_safe(row.opening_date),
-                excel_safe(row.state),
-            ]
-        )
-
-    data = BytesIO()
-    workbook.save(data)
-    data.seek(0)
     return StreamingResponse(
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
