@@ -18,8 +18,10 @@ from app.db.models import Auction
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
+from app.tender_api import router as tenders_router
 
-app = FastAPI(title="SetadScope API", version="0.4.0")
+app = FastAPI(title="SetadScope API", version="0.5.0")
+app.include_router(tenders_router)
 
 ORDER_FIELDS = {
     "source_party_id": Auction.source_party_id,
