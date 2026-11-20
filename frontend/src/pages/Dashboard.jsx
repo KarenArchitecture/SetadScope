@@ -29,6 +29,8 @@ import {
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
+import Sidebar from "../components/Sidebar";
+import ThemeToggle from "../components/ThemeToggle";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import "./Dashboard.css";
 
@@ -198,9 +200,9 @@ function CollectionProgress({ state, kind }) {
   );
 }
 
-function FilterField({ label, children, wide = false }) {
+function FilterField({ label, children, wide = false, className = "" }) {
   return (
-    <label className={"filter-field " + (wide ? "filter-field--wide" : "")}>
+    <label className={"filter-field " + (wide ? "filter-field--wide " : "") + className}>
       <span>{label}</span>
       {children}
     </label>
@@ -217,6 +219,7 @@ function FiltersPanel({
   isOpen,
   onToggle,
   activeCount,
+  canReset,
 }) {
   const isTender = kind === "tenders";
   const provinceOptions = options.provinces || [];
@@ -251,17 +254,15 @@ function FiltersPanel({
             <ChevronDown className={isOpen ? "filters-panel__chevron filters-panel__chevron--open" : "filters-panel__chevron"} size={17} />
           </span>
         </button>
-        {activeCount > 0 && (
-          <button type="button" className="filters-reset" onClick={onReset}>
-            <RotateCcw size={13} /> پاک کردن
-          </button>
-        )}
+        <button type="button" className="filters-reset" onClick={onReset} disabled={!canReset} title="حذف تمام فیلترهای انتخابی و اعمال‌شده">
+          <RotateCcw size={14} /> حذف فیلترها
+        </button>
       </header>
 
       {isOpen && (
         <>
           <div className="filters-panel__body">
-            <div className="filters-grid">
+            <div className={"filters-grid " + (isTender ? "filters-grid--tenders" : "filters-grid--auctions")}>
               <FilterField label="استان">
                 <select value={filters.province} onChange={(event) => onChange("province", event.target.value)}>
                   <option value="">همه استان‌ها</option>
@@ -296,7 +297,7 @@ function FiltersPanel({
                 </FilterField>
               ) : (
                 <>
-                  <FilterField label="حداقل مبلغ پایه">
+                  <FilterField label="حداقل مبلغ پایه" className="filter-field--price">
                     <input
                       type="number"
                       min="0"
@@ -307,7 +308,7 @@ function FiltersPanel({
                       onChange={(event) => onChange("price_min", event.target.value)}
                     />
                   </FilterField>
-                  <FilterField label="حداکثر مبلغ پایه">
+                  <FilterField label="حداکثر مبلغ پایه" className="filter-field--price">
                     <input
                       type="number"
                       min="0"
@@ -521,7 +522,7 @@ function DetailModal({ record, kind, loading, onClose }) {
   );
 }
 
-export default function Dashboard({ kind, onNavigate }) {
+export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [auctionCategory, setAuctionCategory] = useState("movable");
@@ -541,6 +542,7 @@ export default function Dashboard({ kind, onNavigate }) {
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
   const [filtersOpen, setFiltersOpen] = useState(false);
   const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length;
+  const canResetFilters = activeFilterCount > 0 || Object.values(filterDraft).some((value) => value !== "");
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
@@ -830,8 +832,8 @@ export default function Dashboard({ kind, onNavigate }) {
   function handleResetFilters() {
     setFilterDraft({ ...EMPTY_FILTERS });
     setAppliedFilters({ ...EMPTY_FILTERS });
+    setError("");
     setPage(1);
-    setFiltersOpen(false);
   }
 
   function handleSort(key) {
@@ -885,58 +887,18 @@ export default function Dashboard({ kind, onNavigate }) {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
-        <a
-          className="brand"
-          href="/auctions"
-          onClick={(event) => { event.preventDefault(); onNavigate("/auctions"); }}
-          aria-label="SetadScope"
-        >
-          <span className="brand__mark"><Activity size={22} /></span>
-          <span className="brand__name">Setad<span>Scope</span></span>
-        </a>
-
-        <div className="sidebar__section-label">فضای کاری</div>
-        <nav className="sidebar-nav" aria-label="بخش‌های سامانه">
-          <a
-            href="/auctions"
-            className={"sidebar-nav__item " + (!isTender ? "sidebar-nav__item--active" : "")}
-            aria-current={!isTender ? "page" : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate("/auctions"); }}
-          >
-            <Gavel size={18} /> مزایده‌ها
-          </a>
-          <a
-            href="/tenders"
-            className={"sidebar-nav__item " + (isTender ? "sidebar-nav__item--active" : "")}
-            aria-current={isTender ? "page" : undefined}
-            onClick={(event) => { event.preventDefault(); onNavigate("/tenders"); }}
-          >
-            <FileText size={18} /> مناقصه‌ها
-          </a>
-          <span className="sidebar-nav__item sidebar-nav__item--muted">
-            <Database size={18} /> منابع داده <small>به‌زودی</small>
-          </span>
-        </nav>
-
-        <div className="sidebar__bottom">
-          <div className="pipeline-card">
-            <span className="pipeline-card__icon"><FileSearch size={17} /></span>
-            <strong>وضعیت پردازش</strong>
-            <p>داده‌های هر بخش مستقل جمع‌آوری و در PostgreSQL ذخیره می‌شوند.</p>
-            <span className="pipeline-card__status"><span /> بدون تحلیل هوش مصنوعی</span>
-          </div>
-          <div className="sidebar__version">SETADSCOPE · نسخه ۰.۴</div>
-        </div>
-      </aside>
+      <Sidebar page={kind} onNavigate={onNavigate} />
 
       <main className="main-content" id="dashboard">
         <header className="topbar">
           <div className="topbar__breadcrumb">
             SetadScope <span>‹</span> {isTender ? "مناقصه‌ها" : "مزایده‌ها"}
           </div>
-          <div className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}>
-            <span /> {apiOnline ? "اتصال به Backend برقرار است" : "در انتظار اتصال به Backend"}
+          <div className="topbar__actions">
+            <div className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}>
+              <span /> {apiOnline ? "اتصال به Backend برقرار است" : "در انتظار اتصال به Backend"}
+            </div>
+            <ThemeToggle theme={theme} onToggle={onThemeToggle} />
           </div>
         </header>
 
@@ -1055,6 +1017,7 @@ export default function Dashboard({ kind, onNavigate }) {
             isOpen={filtersOpen}
             onToggle={() => setFiltersOpen((current) => !current)}
             activeCount={activeFilterCount}
+            canReset={canResetFilters}
           />
 
           <ListingTable
