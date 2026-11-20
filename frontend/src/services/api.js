@@ -6,10 +6,30 @@ const api = axios.create({
   timeout: 15000,
 });
 
-export async function getAuctions({ search = "", page = 1, pageSize = 20 } = {}) {
-  const response = await api.get("/api/auctions", {
-    params: { search: search || undefined, page, page_size: pageSize },
-  });
+function listingParams(options = {}) {
+  const {
+    search = "",
+    sortBy,
+    sortDir,
+    page = 1,
+    pageSize = 20,
+    ...filters
+  } = options;
+  const params = {
+    ...filters,
+    search: search || undefined,
+    sort_by: sortBy,
+    sort_dir: sortDir,
+    page,
+    page_size: pageSize,
+  };
+  return Object.fromEntries(
+    Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && value !== null),
+  );
+}
+
+export async function getAuctions(options = {}) {
+  const response = await api.get("/api/auctions", { params: listingParams(options) });
   return response.data;
 }
 
@@ -18,10 +38,8 @@ export async function getAuctionById(auctionId) {
   return response.data;
 }
 
-export async function getTenders({ search = "", page = 1, pageSize = 20 } = {}) {
-  const response = await api.get("/api/tenders", {
-    params: { search: search || undefined, page, page_size: pageSize },
-  });
+export async function getTenders(options = {}) {
+  const response = await api.get("/api/tenders", { params: listingParams(options) });
   return response.data;
 }
 

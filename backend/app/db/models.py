@@ -41,6 +41,16 @@ class Auction(Base):
     proposal_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     proposal_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     document_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    site_show_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    site_show_end_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publish_start_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publish_finish_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    winner_announce_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opening_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_modify_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    source_created_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trust_opened_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     base_total_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 2))
     trust_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 2))
     total_volume_m3: Mapped[Decimal | None] = mapped_column(Numeric(20, 3))
@@ -56,6 +66,11 @@ class Auction(Base):
     __table_args__ = (
         UniqueConstraint("source", "source_party_id", name="uq_auctions_source_party"),
         Index("ix_auctions_deadline", "proposal_deadline"),
+        Index("ix_auctions_site_show_start", "site_show_start_at"),
+        Index("ix_auctions_publish_start", "publish_start_at"),
+        Index("ix_auctions_location", "province", "city"),
+        Index("ix_auctions_base_total_price", "base_total_price"),
+        Index("ix_auctions_state", "state"),
     )
 
 
@@ -78,6 +93,10 @@ class Tender(Base):
     documents_deadline_date: Mapped[str | None] = mapped_column(String(40))
     proposal_deadline_date: Mapped[str | None] = mapped_column(String(40))
     opening_date: Mapped[str | None] = mapped_column(String(40))
+    public_notification_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    documents_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    proposal_deadline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    opening_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -89,6 +108,10 @@ class Tender(Base):
         Index("ix_tenders_number", "tender_number"),
         Index("ix_tenders_notification_date", "public_notification_date"),
         Index("ix_tenders_proposal_deadline", "proposal_deadline_date"),
+        Index("ix_tenders_public_notification_at", "public_notification_at"),
+        Index("ix_tenders_proposal_deadline_at", "proposal_deadline_at"),
+        Index("ix_tenders_location", "province", "city"),
+        Index("ix_tenders_state_type", "state", "type_name"),
     )
 
 

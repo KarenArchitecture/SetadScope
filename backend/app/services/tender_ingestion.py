@@ -1,7 +1,8 @@
 """Normalize and upsert public Setad tender response pages into PostgreSQL.
 
-Jalali date strings are intentionally kept as text until a verified calendar
-conversion is introduced. The complete source object is retained in JSONB.
+Original Jalali date strings remain unchanged for display and audit; parallel
+timezone-aware Gregorian columns support reliable filtering and sorting. The
+complete source object is retained in JSONB.
 """
 from __future__ import annotations
 
@@ -14,6 +15,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Tender
+from app.services.date_normalization import parse_setad_datetime
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -61,6 +63,10 @@ def project_tender_record(record: dict[str, Any]) -> tuple[dict[str, Any] | None
         "documents_deadline_date": _as_text(record.get("documentsDeadlineDate")),
         "proposal_deadline_date": _as_text(record.get("proposalDeadlineDate")),
         "opening_date": _as_text(record.get("openingDate")),
+        "public_notification_at": parse_setad_datetime(record.get("publicNotificationDate")),
+        "documents_deadline_at": parse_setad_datetime(record.get("documentsDeadlineDate")),
+        "proposal_deadline_at": parse_setad_datetime(record.get("proposalDeadlineDate")),
+        "opening_at": parse_setad_datetime(record.get("openingDate")),
         "raw_payload": record,
     }, "ready"
 

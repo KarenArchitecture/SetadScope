@@ -6,43 +6,21 @@ import re
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from zoneinfo import ZoneInfo
 
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Auction, IngestionRun
 from app.services.keyword_matching import matched_keywords
+from app.services.date_normalization import parse_setad_datetime
 
-TEHRAN = ZoneInfo("Asia/Tehran")
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = PROJECT_ROOT / "data" / "raw"
 
 
 def to_datetime(value: object) -> datetime | None:
-    """Parse known Gregorian/epoch formats; keep unsupported (e.g. Jalali) values raw."""
-    if value is None or value == "":
-        return None
-    if isinstance(value, (int, float)) or (
-        isinstance(value, str) and re.fullmatch(r"\d{13}", value.strip())
-    ):
-        n = int(value)
-        return datetime.fromtimestamp(n / 1000, tz=timezone.utc) if n > 100000000000 else None
-    if isinstance(value, str):
-        raw = value.strip()
-        if raw.startswith("/Date("):
-            match = re.match(r"/Date\((\d+)(?:[+-]\d{4})?\)/", raw)
-            if match:
-                return datetime.fromtimestamp(int(match.group(1)) / 1000, tz=timezone.utc)
-        try:
-            result = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-            if not 2000 <= result.year <= 2100:
-                return None
-            return result.replace(tzinfo=TEHRAN) if result.tzinfo is None else result
-        except ValueError:
-            return None
-    return None
-
+    """Compatibility wrapper around the shared Jalali/Gregorian parser."""
+    return parse_setad_datetime(value)
 
 def to_decimal(value: object) -> Decimal | None:
     if value is None or value == "":
@@ -70,6 +48,13 @@ def project_record(record: dict, now: datetime | None = None) -> tuple[dict | No
 
     auctioneer = auction.get("auctioneer") or {}
     city = party.get("visitCity") or {}
+
+    def source_date(field: str) -> datetime | None:
+        for container in (auction, party, record):
+            value = container.get(field)
+            if value not in (None, ""):
+                return parse_setad_datetime(value)
+        return None
     return {
         "source": "setad_main_estate",
         "source_party_id": str(party_id),
@@ -85,6 +70,16 @@ def project_record(record: dict, now: datetime | None = None) -> tuple[dict | No
         "proposal_start": to_datetime(auction.get("fromProposalDate")),
         "proposal_deadline": to_datetime(auction.get("toProposalDate")),
         "document_deadline": None,
+        "site_show_start_at": source_date("fromSiteShowDate"),
+        "site_show_end_at": source_date("toSiteShowDate"),
+        "publish_start_at": source_date("publishStartDate"),
+        "publish_finish_at": source_date("publishFinishDate"),
+        "winner_announce_at": source_date("winnerAnnounceDate"),
+        "opened_at": source_date("openedDate"),
+        "opening_at": source_date("openingDate"),
+        "last_modify_at": source_date("lastModifyDate"),
+        "source_created_at": source_date("createDate"),
+        "trust_opened_at": source_date("trustOpenedDate"),
         "base_total_price": to_decimal(party.get("baseTotalPrice")),
         "trust_amount": to_decimal(party.get("trustAmount")),
         "total_volume_m3": None,

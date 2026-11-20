@@ -76,7 +76,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ## Current data limitations
 
-The current collector covers the public main-estate listing source only. Keyword matching is enabled; deadline filtering is temporarily disabled so matched listings are not lost while Jalali date parsing is pending. Document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.
+The current collectors cover the public main-estate auction listing and the separate tender listing. Auction keyword matching remains enabled, and date-based filtering is applied in the dashboard rather than during ingestion so matching records are not lost. Jalali dates are normalized into timezone-aware Gregorian timestamps for querying while the original source values remain in JSONB / original text fields. Document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.
 
 
 ## Tender records
@@ -103,7 +103,7 @@ Tender API endpoints:
 - GET /api/tenders/{id} (includes the retained raw_payload)
 - GET /api/tenders/export.xlsx
 
-The source dates currently arrive as Jalali strings (for example, 1405/09/17 14:30:00). They are stored unchanged as text; no Gregorian conversion or date-based active/archive filtering is applied. The automated tender-page collector is implemented using the confirmed GET endpoint. It creates a fresh HTTP session and obtains the current CSRF token from the landing page; the token captured in DevTools is never hard-coded.
+The source dates arrive as Jalali strings (for example, 1405/09/17 14:30:00). The original strings are preserved, and parallel timezone-aware Gregorian columns are populated for reliable date sorting and filtering. The automated tender-page collector is implemented using the confirmed GET endpoint. It creates a fresh HTTP session and obtains the current CSRF token from the landing page; the token captured in DevTools is never hard-coded.
 
 
 ## Separate auction and tender workspaces
@@ -121,3 +121,17 @@ The tender collector calls the confirmed public listing endpoint:
 It obtains a fresh CSRF token from the tender landing page within the same HTTP session. The token is not stored in source code or raw snapshots. The collector reads the total page count and record count from the first response, then follows the server-reported pagination.
 
 The dashboard polls the matching collection status endpoint once per second while a job is running. Progress covers both fetching (0–85%) and database import (85–100%), including completed pages, fetched rows, and stored rows.
+
+
+## Data table, filters, and date handling
+
+Both /auctions and /tenders use server-side sorting, filtering, and pagination.
+
+- Sortable columns include announcement date, proposal deadline / remaining time, price (auctions only), organization, location, status, and tender type where available.
+- Province and city are separate filters. The city list is scoped to the selected province.
+- Date filters include announcement and proposal-deadline ranges; tenders also support the document-deadline range.
+- Auctions support minimum and maximum base-price filters. Tender price filters are intentionally absent because the inspected monetary fields (including offeredPrice1/2/3 and tndaFinancialEstimatesPrice) are null in the sample response.
+- The Excel export uses the same active filters and sort order as the table.
+- The summary cards distinguish the current result/page from full-archive counts.
+
+Setad timestamps such as fromProposalDate, toProposalDate, fromSiteShowDate, toSiteShowDate, publishStartDate, publishFinishDate, winnerAnnounceDate, openedDate, openingDate, lastModifyDate, createDate, and trustOpenedDate are parsed where present. Tender publicNotificationDate, documentsDeadlineDate, proposalDeadlineDate, and openingDate are parsed as well. Original source values remain available in the raw JSONB payload and the tender source-text columns.

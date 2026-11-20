@@ -1,4 +1,4 @@
-import { ArrowLeft, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react";
+import { ArrowDown, ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react";
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -17,6 +17,7 @@ export default function ListingTable({
   total,
   pageSize,
   onPageChange,
+  onPageSizeChange,
   onDetails,
   searchInput,
   onSearchInput,
@@ -24,6 +25,9 @@ export default function ListingTable({
   searchPlaceholder,
   error,
   onRetry,
+  sortBy,
+  sortDir,
+  onSort,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, total);
@@ -72,7 +76,28 @@ export default function ListingTable({
         <table className="auction-table">
           <thead>
             <tr>
-              {columns.map((column) => <th key={column.key}>{column.label}</th>)}
+              {columns.map((column) => {
+                const active = sortBy === column.sortKey;
+                return (
+                  <th key={column.key}>
+                    {column.sortable ? (
+                      <button
+                        type="button"
+                        className={"table-sort " + (active ? "table-sort--active" : "")}
+                        onClick={() => onSort(column.sortKey)}
+                        aria-label={"مرتب‌سازی بر اساس " + column.label}
+                      >
+                        {column.label}
+                        {active
+                          ? sortDir === "asc"
+                            ? <ArrowUp size={13} />
+                            : <ArrowDown size={13} />
+                          : <ArrowDown size={13} />}
+                      </button>
+                    ) : column.label}
+                  </th>
+                );
+              })}
               <th><span className="sr-only">جزئیات</span></th>
             </tr>
           </thead>
@@ -86,14 +111,16 @@ export default function ListingTable({
             ) : items.length === 0 ? (
               <tr>
                 <td colSpan={columns.length + 1} className="table-message">
-                  رکوردی برای نمایش وجود ندارد.
+                  رکوردی با این جست‌وجو و فیلترها پیدا نشد.
                 </td>
               </tr>
             ) : items.map((item) => (
               <tr key={item.id}>
                 {columns.map((column) => (
                   <td key={column.key} className={column.className || ""}>
-                    {column.render ? column.render(item) : (item[column.key] || "—")}
+                    {column.render
+                      ? column.render(item)
+                      : (item[column.key] ?? "—")}
                   </td>
                 ))}
                 <td>
@@ -109,22 +136,32 @@ export default function ListingTable({
 
       <footer className="table-footer">
         <span>نمایش {formatNumber(from)} تا {formatNumber(to)} از {formatNumber(total)} رکورد</span>
-        <div className="pagination">
-          <button
-            aria-label="صفحه قبل"
-            disabled={loading || page <= 1}
-            onClick={() => onPageChange(page - 1)}
-          >
-            <ChevronRight size={17} />
-          </button>
-          <span>صفحه {formatNumber(page)} از {formatNumber(pages)}</span>
-          <button
-            aria-label="صفحه بعد"
-            disabled={loading || page >= pages}
-            onClick={() => onPageChange(page + 1)}
-          >
-            <ChevronLeft size={17} />
-          </button>
+        <div className="table-footer__controls">
+          <label className="page-size-control">
+            تعداد در صفحه
+            <select value={pageSize} onChange={(event) => onPageSizeChange(Number(event.target.value))}>
+              <option value={20}>۲۰</option>
+              <option value={50}>۵۰</option>
+              <option value={100}>۱۰۰</option>
+            </select>
+          </label>
+          <div className="pagination">
+            <button
+              aria-label="صفحه قبل"
+              disabled={loading || page <= 1}
+              onClick={() => onPageChange(page - 1)}
+            >
+              <ChevronRight size={17} />
+            </button>
+            <span>صفحه {formatNumber(page)} از {formatNumber(pages)}</span>
+            <button
+              aria-label="صفحه بعد"
+              disabled={loading || page >= pages}
+              onClick={() => onPageChange(page + 1)}
+            >
+              <ChevronLeft size={17} />
+            </button>
+          </div>
         </div>
       </footer>
     </section>

@@ -11,7 +11,7 @@ The uploaded Setad response has a top-level gridModel array. Each row has a sour
 - tenders.source_tender_id is the source row ID and is unique per source.
 - tender_number is stored as text to preserve the source identifier exactly.
 - The full source row is stored in raw_payload JSONB.
-- Jalali date strings are kept unchanged until a calendar conversion is implemented and tested.
+- Original Jalali date strings are kept unchanged in the source-text columns and raw_payload JSONB. Parallel timezone-aware Gregorian DateTime columns are populated for sorting, date-range filtering, and remaining-time calculations.
 
 ## Importing response pages
 
@@ -29,7 +29,7 @@ The import is idempotent: the same source tender ID updates its existing row rat
 
 ## API
 
-- GET /api/tenders: paginated and searchable tender rows.
+- GET /api/tenders: server-side search, province/city/state/type filters, announcement/deadline date ranges, sorting, and pagination.
 - GET /api/tenders/{id}: tender detail including the raw JSONB payload.
 - GET /api/tenders/export.xlsx: Excel export.
 
@@ -59,3 +59,15 @@ Or use .\setad.ps1 collect-tenders.
 The collector emits structured progress after each page. FastAPI streams these progress events from the collector process into an independent in-memory status object for auctions and tenders. The dashboard polls the matching status endpoint while that job is active.
 
 Progress is split into two phases: fetching (0–85%) and PostgreSQL import (85–100%). The UI displays page counts, fetched record counts, stored counts, errors, and the final totals.
+
+
+## Data table behavior
+
+The tender workspace displays dates using the Persian calendar while sorting and filtering against the normalized timestamp columns. Supported date filters are public announcement, proposal deadline, and document deadline. The table also supports sorting by announcement, document deadline, proposal deadline / remaining time, organization, location, type, and status.
+
+Province and city are separate fields. The city filter is scoped to the selected province. The export endpoint accepts the same filter and sort parameters as the table.
+
+The tender response does not currently provide a validated monetary amount in the mapped fields, so price sorting and price filters are intentionally limited to auctions. Archive summary metadata reports distinct province, city, organization, and tender-type counts across the complete tender archive, alongside the current filtered result count.
+
+
+The inspected tender response contains monetary-related keys such as offeredPrice1, offeredPrice2, offeredPrice3, tenderDocumentsPrice, and tndaFinancialEstimatesPrice, but the sample values are null. The table therefore does not expose a price sort or price range filter for tenders until real values and their unit/meaning are verified.

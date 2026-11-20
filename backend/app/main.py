@@ -6,6 +6,7 @@ import sys
 import threading
 from collections import deque
 from datetime import datetime, timezone
+from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
 from typing import Literal
@@ -20,6 +21,7 @@ from app.db.models import Auction
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
+from app.services.date_normalization import parse_filter_bound
 from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
 from app.tender_jobs import latest_tender_run_files
 from app.tender_api import router as tenders_router
@@ -41,9 +43,13 @@ ORDER_FIELDS = {
     "base_total_price": Auction.base_total_price,
     "trust_amount": Auction.trust_amount,
     "money_unit": Auction.money_unit,
+    "announcement_at": func.coalesce(Auction.site_show_start_at, Auction.publish_start_at),
     "proposal_start": Auction.proposal_start,
     "proposal_deadline": Auction.proposal_deadline,
     "document_deadline": Auction.document_deadline,
+    "winner_announce_at": Auction.winner_announce_at,
+    "opening_at": Auction.opening_at,
+    "source_created_at": Auction.source_created_at,
     "total_volume_m3": Auction.total_volume_m3,
     "first_seen_at": Auction.first_seen_at,
     "updated_at": Auction.updated_at,
@@ -263,6 +269,17 @@ def auction_to_dict(a: Auction) -> dict:
         "proposal_start": a.proposal_start,
         "proposal_deadline": a.proposal_deadline,
         "document_deadline": a.document_deadline,
+        "announcement_at": a.site_show_start_at or a.publish_start_at,
+        "site_show_start_at": a.site_show_start_at,
+        "site_show_end_at": a.site_show_end_at,
+        "publish_start_at": a.publish_start_at,
+        "publish_finish_at": a.publish_finish_at,
+        "winner_announce_at": a.winner_announce_at,
+        "opened_at": a.opened_at,
+        "opening_at": a.opening_at,
+        "last_modify_at": a.last_modify_at,
+        "source_created_at": a.source_created_at,
+        "trust_opened_at": a.trust_opened_at,
         "base_total_price": a.base_total_price,
         "trust_amount": a.trust_amount,
         "total_volume_m3": a.total_volume_m3,
@@ -274,14 +291,37 @@ def auction_to_dict(a: Auction) -> dict:
     }
 
 
-def filtered_query(status: str, search: str | None):
+def _parse_bound(value: str | None, *, end_of_day: bool = False):
+    if not value:
+        return None
+    parsed = parse_filter_bound(value, end_of_day=end_of_day)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail=f"Invalid date filter: {value}")
+    return parsed
+
+
+def filtered_query(
+    status: str,
+    search: str | None,
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    price_min: Decimal | None = None,
+    price_max: Decimal | None = None,
+):
     query = select(Auction)
     now = datetime.now(timezone.utc)
+    announcement_date = func.coalesce(Auction.site_show_start_at, Auction.publish_start_at)
+
     if status == "active":
         query = query.where(Auction.proposal_deadline > now)
     elif status == "archive":
         query = query.where(Auction.proposal_deadline <= now)
-    if search:
+    if search and search.strip():
         term = f"%{search.strip()}%"
         query = query.where(
             or_(
@@ -289,10 +329,89 @@ def filtered_query(status: str, search: str | None):
                 Auction.description.ilike(term),
                 Auction.organization.ilike(term),
                 Auction.city.ilike(term),
+                Auction.province.ilike(term),
+                Auction.auction_no.ilike(term),
             )
         )
+    if province:
+        query = query.where(Auction.province == province)
+    if city:
+        query = query.where(Auction.city == city)
+    if state:
+        query = query.where(Auction.state == state)
+
+    announcement_start = _parse_bound(announcement_from)
+    announcement_end = _parse_bound(announcement_to, end_of_day=True)
+    deadline_start = _parse_bound(deadline_from)
+    deadline_end = _parse_bound(deadline_to, end_of_day=True)
+    if announcement_start and announcement_end and announcement_start > announcement_end:
+        raise HTTPException(status_code=422, detail="announcement_from cannot exceed announcement_to")
+    if deadline_start and deadline_end and deadline_start > deadline_end:
+        raise HTTPException(status_code=422, detail="deadline_from cannot exceed deadline_to")
+    if price_min is not None and price_max is not None and price_min > price_max:
+        raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
+    if announcement_start:
+        query = query.where(announcement_date >= announcement_start)
+    if announcement_end:
+        query = query.where(announcement_date <= announcement_end)
+    if deadline_start:
+        query = query.where(Auction.proposal_deadline >= deadline_start)
+    if deadline_end:
+        query = query.where(Auction.proposal_deadline <= deadline_end)
+    if price_min is not None:
+        query = query.where(Auction.base_total_price >= price_min)
+    if price_max is not None:
+        query = query.where(Auction.base_total_price <= price_max)
     return query
 
+
+def auction_archive_stats(db: Session) -> dict[str, int]:
+    total = db.scalar(select(func.count(Auction.id))) or 0
+    provinces = db.scalar(
+        select(func.count(func.distinct(Auction.province))).where(Auction.province.is_not(None))
+    ) or 0
+    cities = db.scalar(
+        select(func.count(func.distinct(Auction.city))).where(Auction.city.is_not(None))
+    ) or 0
+    organizations = db.scalar(
+        select(func.count(func.distinct(Auction.organization))).where(Auction.organization.is_not(None))
+    ) or 0
+    published = db.scalar(
+        select(func.count(Auction.id)).where(Auction.state == "PUBLISHED")
+    ) or 0
+    return {
+        "total": total,
+        "province_count": provinces,
+        "city_count": cities,
+        "organization_count": organizations,
+        "published_count": published,
+    }
+
+
+def auction_filter_options(db: Session) -> dict[str, list]:
+    provinces = db.scalars(
+        select(Auction.province)
+        .where(Auction.province.is_not(None))
+        .distinct()
+        .order_by(Auction.province)
+    ).all()
+    city_rows = db.execute(
+        select(Auction.city, Auction.province)
+        .where(Auction.city.is_not(None), Auction.province.is_not(None))
+        .distinct()
+        .order_by(Auction.province, Auction.city)
+    ).all()
+    states = db.scalars(
+        select(Auction.state)
+        .where(Auction.state.is_not(None))
+        .distinct()
+        .order_by(Auction.state)
+    ).all()
+    return {
+        "provinces": list(provinces),
+        "cities": [{"city": city, "province": province} for city, province in city_rows],
+        "states": list(states),
+    }
 
 @app.get("/api/health")
 def health(db: Session = Depends(get_db)):
@@ -351,6 +470,15 @@ def start_auction_collection(background_tasks: BackgroundTasks):
 def get_auctions(
     search: str | None = None,
     status: Literal["active", "archive", "all"] = "all",
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    price_min: Decimal | None = Query(None, ge=0),
+    price_max: Decimal | None = Query(None, ge=0),
     sort_by: str = Query("proposal_deadline"),
     sort_dir: Literal["asc", "desc"] = "asc",
     page: int = Query(1, ge=1),
@@ -359,7 +487,14 @@ def get_auctions(
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    query = filtered_query(status, search)
+    if price_min is not None and price_max is not None and price_min > price_max:
+        raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
+
+    query = filtered_query(
+        status, search, province, city, state,
+        announcement_from, announcement_to, deadline_from, deadline_to,
+        price_min, price_max,
+    )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -374,6 +509,8 @@ def get_auctions(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
+        "archive_stats": auction_archive_stats(db),
+        "filter_options": auction_filter_options(db),
     }
 
 
@@ -381,46 +518,51 @@ def get_auctions(
 def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    price_min: Decimal | None = Query(None, ge=0),
+    price_max: Decimal | None = Query(None, ge=0),
+    sort_by: str = Query("proposal_deadline"),
+    sort_dir: Literal["asc", "desc"] = "asc",
     db: Session = Depends(get_db),
 ):
+    if sort_by not in ORDER_FIELDS:
+        raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    query = filtered_query(
+        status, search, province, city, state,
+        announcement_from, announcement_to, deadline_from, deadline_to,
+        price_min, price_max,
+    )
+    column = ORDER_FIELDS[sort_by]
+    ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("SetadScope")
     sheet.append(
         [
-            "شناسه",
-            "عنوان",
-            "شرح کلی",
-            "کلمات منطبق",
-            "سازمان",
-            "استان",
-            "شهر",
-            "شروع پیشنهاد",
-            "مهلت پیشنهاد",
-            "مهلت دریافت اسناد",
-            "مبلغ پایه (واحد تأییدنشده)",
-            "حجم کل (مترمکعب)",
-            "شماره آگهی",
-            "لینک منبع",
+            "شناسه", "عنوان", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
+            "تاریخ اعلام در سایت", "شروع پیشنهاد", "مهلت پیشنهاد", "مهلت دریافت اسناد",
+            "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
+            "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
         ]
     )
-    query = filtered_query(status, search).order_by(Auction.proposal_deadline, Auction.id)
+    query = query.order_by(ordering, Auction.id.asc())
     for a in db.scalars(query).yield_per(500):
         sheet.append(
             [
-                a.source_party_id,
-                a.title,
-                a.description,
-                ", ".join(a.matched_keywords or []),
-                excel_safe(a.organization),
-                excel_safe(a.province),
-                excel_safe(a.city),
-                str(a.proposal_start or ""),
-                str(a.proposal_deadline or ""),
+                a.source_party_id, a.title, a.description, ", ".join(a.matched_keywords or []),
+                excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
+                str(a.site_show_start_at or a.publish_start_at or ""),
+                str(a.proposal_start or ""), str(a.proposal_deadline or ""),
                 str(a.document_deadline or ""),
                 float(a.base_total_price) if a.base_total_price is not None else None,
-                float(a.total_volume_m3) if a.total_volume_m3 is not None else None,
-                excel_safe(a.auction_no),
-                excel_safe(a.source_url),
+                float(a.trust_amount) if a.trust_amount is not None else None,
+                str(a.winner_announce_at or ""), str(a.opening_at or ""),
+                excel_safe(a.auction_no), excel_safe(a.source_url),
             ]
         )
     data = BytesIO()

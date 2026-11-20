@@ -27,6 +27,10 @@ def test_project_tender_record_maps_list_fields_and_keeps_jalali_dates():
     assert item["province"] == "آذربایجان شرقی"
     assert item["city"] == "تبریز"
     assert item["proposal_deadline_date"] == "1405/09/17 14:30:00"
+    assert item["public_notification_at"].isoformat().startswith("2026-11-19T22:00:00")
+    assert item["documents_deadline_at"].isoformat().startswith("2026-11-26T19:00:00")
+    assert item["proposal_deadline_at"].isoformat().startswith("2026-12-08T14:30:00")
+    assert item["opening_at"].isoformat().startswith("2026-12-09T09:30:00")
     assert item["raw_payload"] is source
 
 

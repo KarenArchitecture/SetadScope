@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
+from datetime import datetime
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Tender
 from app.db.session import get_db
+from app.services.date_normalization import parse_filter_bound
 
 
 router = APIRouter(tags=["tenders"])
@@ -24,10 +26,11 @@ ORDER_FIELDS = {
     "organization": Tender.organization,
     "province": Tender.province,
     "city": Tender.city,
-    "public_notification_date": Tender.public_notification_date,
-    "documents_deadline_date": Tender.documents_deadline_date,
-    "proposal_deadline_date": Tender.proposal_deadline_date,
-    "opening_date": Tender.opening_date,
+    "announcement_at": Tender.public_notification_at,
+    "public_notification_at": Tender.public_notification_at,
+    "documents_deadline_at": Tender.documents_deadline_at,
+    "proposal_deadline_at": Tender.proposal_deadline_at,
+    "opening_at": Tender.opening_at,
     "state": Tender.state,
     "first_seen_at": Tender.first_seen_at,
     "updated_at": Tender.updated_at,
@@ -48,9 +51,14 @@ def tender_to_dict(tender: Tender, include_raw: bool = False) -> dict:
         "description": tender.description,
         "state": tender.state,
         "public_notification_date": tender.public_notification_date,
+        "announcement_at": tender.public_notification_at,
         "documents_deadline_date": tender.documents_deadline_date,
         "proposal_deadline_date": tender.proposal_deadline_date,
         "opening_date": tender.opening_date,
+        "public_notification_at": tender.public_notification_at,
+        "documents_deadline_at": tender.documents_deadline_at,
+        "proposal_deadline_at": tender.proposal_deadline_at,
+        "opening_at": tender.opening_at,
         "first_seen_at": tender.first_seen_at,
         "updated_at": tender.updated_at,
     }
@@ -59,7 +67,28 @@ def tender_to_dict(tender: Tender, include_raw: bool = False) -> dict:
     return result
 
 
-def filtered_tender_query(search: str | None):
+def _parse_bound(value: str | None, *, end_of_day: bool = False):
+    if not value:
+        return None
+    parsed = parse_filter_bound(value, end_of_day=end_of_day)
+    if parsed is None:
+        raise HTTPException(status_code=422, detail=f"Invalid date filter: {value}")
+    return parsed
+
+
+def filtered_tender_query(
+    search: str | None,
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    type_name: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    documents_deadline_from: str | None = None,
+    documents_deadline_to: str | None = None,
+):
     query = select(Tender)
     if search and search.strip():
         term = f"%{search.strip()}%"
@@ -74,8 +103,91 @@ def filtered_tender_query(search: str | None):
                 Tender.city.ilike(term),
             )
         )
+    if province:
+        query = query.where(Tender.province == province)
+    if city:
+        query = query.where(Tender.city == city)
+    if state:
+        query = query.where(Tender.state == state)
+    if type_name:
+        query = query.where(Tender.type_name == type_name)
+
+    announcement_start = _parse_bound(announcement_from)
+    announcement_end = _parse_bound(announcement_to, end_of_day=True)
+    deadline_start = _parse_bound(deadline_from)
+    deadline_end = _parse_bound(deadline_to, end_of_day=True)
+    documents_start = _parse_bound(documents_deadline_from)
+    documents_end = _parse_bound(documents_deadline_to, end_of_day=True)
+    if announcement_start and announcement_end and announcement_start > announcement_end:
+        raise HTTPException(status_code=422, detail="announcement_from cannot exceed announcement_to")
+    if deadline_start and deadline_end and deadline_start > deadline_end:
+        raise HTTPException(status_code=422, detail="deadline_from cannot exceed deadline_to")
+    if documents_start and documents_end and documents_start > documents_end:
+        raise HTTPException(status_code=422, detail="documents_deadline_from cannot exceed documents_deadline_to")
+    if announcement_start:
+        query = query.where(Tender.public_notification_at >= announcement_start)
+    if announcement_end:
+        query = query.where(Tender.public_notification_at <= announcement_end)
+    if deadline_start:
+        query = query.where(Tender.proposal_deadline_at >= deadline_start)
+    if deadline_end:
+        query = query.where(Tender.proposal_deadline_at <= deadline_end)
+    if documents_start:
+        query = query.where(Tender.documents_deadline_at >= documents_start)
+    if documents_end:
+        query = query.where(Tender.documents_deadline_at <= documents_end)
     return query
 
+
+def tender_archive_stats(db: Session) -> dict[str, int]:
+    return {
+        "total": db.scalar(select(func.count(Tender.id))) or 0,
+        "province_count": db.scalar(
+            select(func.count(func.distinct(Tender.province))).where(Tender.province.is_not(None))
+        ) or 0,
+        "city_count": db.scalar(
+            select(func.count(func.distinct(Tender.city))).where(Tender.city.is_not(None))
+        ) or 0,
+        "organization_count": db.scalar(
+            select(func.count(func.distinct(Tender.organization))).where(Tender.organization.is_not(None))
+        ) or 0,
+        "type_count": db.scalar(
+            select(func.count(func.distinct(Tender.type_name))).where(Tender.type_name.is_not(None))
+        ) or 0,
+    }
+
+
+def tender_filter_options(db: Session) -> dict[str, list]:
+    provinces = db.scalars(
+        select(Tender.province)
+        .where(Tender.province.is_not(None))
+        .distinct()
+        .order_by(Tender.province)
+    ).all()
+    city_rows = db.execute(
+        select(Tender.city, Tender.province)
+        .where(Tender.city.is_not(None), Tender.province.is_not(None))
+        .distinct()
+        .order_by(Tender.province, Tender.city)
+    ).all()
+    states = db.scalars(
+        select(Tender.state)
+        .where(Tender.state.is_not(None))
+        .distinct()
+        .order_by(Tender.state)
+    ).all()
+    types = db.scalars(
+        select(Tender.type_name)
+        .where(Tender.type_name.is_not(None))
+        .distinct()
+        .order_by(Tender.type_name)
+    ).all()
+    return {
+        "provinces": list(provinces),
+        "cities": [{"city": city, "province": province} for city, province in city_rows],
+        "states": list(states),
+        "types": list(types),
+    }
 
 def excel_safe(value):
     if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
@@ -86,7 +198,17 @@ def excel_safe(value):
 @router.get("/api/tenders")
 def get_tenders(
     search: str | None = None,
-    sort_by: str = Query("public_notification_date"),
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    type_name: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    documents_deadline_from: str | None = None,
+    documents_deadline_to: str | None = None,
+    sort_by: str = Query("public_notification_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
@@ -95,7 +217,11 @@ def get_tenders(
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
 
-    query = filtered_tender_query(search)
+    query = filtered_tender_query(
+        search, province, city, state, type_name,
+        announcement_from, announcement_to, deadline_from, deadline_to,
+        documents_deadline_from, documents_deadline_to,
+    )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -111,38 +237,48 @@ def get_tenders(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
+        "archive_stats": tender_archive_stats(db),
+        "filter_options": tender_filter_options(db),
     }
 
 
 @router.get("/api/tenders/export.xlsx")
 def export_tenders(
     search: str | None = None,
+    province: str | None = None,
+    city: str | None = None,
+    state: str | None = None,
+    type_name: str | None = None,
+    announcement_from: str | None = None,
+    announcement_to: str | None = None,
+    deadline_from: str | None = None,
+    deadline_to: str | None = None,
+    documents_deadline_from: str | None = None,
+    documents_deadline_to: str | None = None,
+    sort_by: str = Query("public_notification_at"),
+    sort_dir: Literal["asc", "desc"] = "desc",
     db: Session = Depends(get_db),
 ):
+    if sort_by not in ORDER_FIELDS:
+        raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    query = filtered_tender_query(
+        search, province, city, state, type_name,
+        announcement_from, announcement_to, deadline_from, deadline_to,
+        documents_deadline_from, documents_deadline_to,
+    )
+    column = ORDER_FIELDS[sort_by]
+    ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
     workbook = Workbook(write_only=True)
     sheet = workbook.create_sheet("SetadScope Tenders")
     sheet.append(
         [
-            "شناسه منبع",
-            "شماره مناقصه",
-            "عنوان",
-            "نوع فراخوان",
-            "سازمان",
-            "استان",
-            "شهر",
-            "شرح",
-            "تاریخ انتشار",
-            "مهلت دریافت اسناد",
-            "مهلت پیشنهاد",
-            "تاریخ بازگشایی",
-            "وضعیت",
+            "شناسه منبع", "شماره مناقصه", "عنوان", "نوع فراخوان", "سازمان",
+            "استان", "شهر", "شرح", "تاریخ انتشار", "مهلت دریافت اسناد",
+            "مهلت پیشنهاد", "تاریخ بازگشایی", "وضعیت",
         ]
     )
 
-    query = filtered_tender_query(search).order_by(
-        Tender.public_notification_date.desc().nulls_last(),
-        Tender.id.asc(),
-    )
+    query = query.order_by(ordering, Tender.id.asc())
     for row in db.scalars(query).yield_per(500):
         sheet.append(
             [
