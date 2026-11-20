@@ -89,7 +89,25 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - name: Install backend dependencies
         run: python -m pip install -r backend/requirements-dev.txt
-      - name: Migrate a fresh PostgreSQL database to latest version
+      - name: Migrate a fresh PostgreSQL database to previous version
+        working-directory: backend
+        run: alembic upgrade 0004
+      - name: Seed legacy auction before category migration
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as connection:
+              connection.execute(
+                  text("""INSERT INTO auctions
+                  (source, source_party_id, matched_keywords, raw_payload)
+                  VALUES ('setad_main_estate', 'pre-migration-fixture',
+                  CAST(:keywords AS json), CAST(:payload AS jsonb))"""),
+                  {"keywords": '["چوب"]', "payload": '{"marker": "pre-migration"}'},
+              )
+          PY
+      - name: Upgrade existing PostgreSQL data to latest schema
         working-directory: backend
         run: alembic upgrade head
       - name: Test all five category imports, upserts, filters and Excel endpoints

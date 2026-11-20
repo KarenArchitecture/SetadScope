@@ -71,6 +71,22 @@ ROWS = {
 }
 
 
+def test_legacy_keyword_matched_auction_survives_0005_migration():
+    with SessionLocal() as db:
+        legacy = db.scalar(
+            select(Auction).where(
+                Auction.source == "setad_main_estate",
+                Auction.source_party_id == "pre-migration-fixture",
+            )
+        )
+        assert legacy is not None, "Legacy row inserted before 0005 migration was lost"
+        assert legacy.category == "movable"
+        assert legacy.has_keyword_match is True
+        assert legacy.matched_keywords == ["چوب"]
+        assert legacy.raw_payload == {"marker": "pre-migration"}
+        assert legacy.first_seen_at is not None
+
+
 def test_all_category_imports_idempotence_and_http_filters(tmp_path):
     with SessionLocal() as db:
         try:
