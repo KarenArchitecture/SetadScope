@@ -55,7 +55,7 @@ Run these from the repository root:
 - `stop` stops containers but preserves the named PostgreSQL volume.
 - `restart` restarts existing containers without rebuilding images.
 - `rebuild` rebuilds images and recreates services after code or dependency changes.
-- `collect` fetches the requested Setad main-estate pages into `data/raw`, then imports only the latest run into PostgreSQL.
+- `collect` fetches pages 1–37 (the currently reported full listing) into `data/raw`, then imports only keyword-matched records from the latest run into PostgreSQL. Deadline filtering is intentionally disabled for this delivery; Jalali dates remain in the raw source payload until date parsing is implemented.
 - To re-import every saved raw page snapshot manually: `docker compose run --rm ingest --all`.
 
 If PowerShell blocks script execution, run the current command in a PowerShell session with an appropriate execution policy, for example:
@@ -74,4 +74,4 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 ## Current data limitations
 
-The current collector covers the public main-estate listing source only. Date formats, document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.
+The current collector covers the public main-estate listing source only. Keyword matching is enabled; deadline filtering is temporarily disabled so matched listings are not lost while Jalali date parsing is pending. Document deadlines, currency semantics, and cubic-meter volume still require validation against real Setad records. Unknown values are kept empty rather than guessed. Daily scheduling and AI-assisted analysis are not enabled yet.

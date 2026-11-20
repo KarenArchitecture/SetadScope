@@ -66,7 +66,7 @@ services:
     image: setadscope-backend:local
     profiles: ["jobs"]
     entrypoint: ["python", "-m", "setad_scope.collectors.fetch_main_estate"]
-    command: ["--start-page", "1", "--end-page", "3"]
+    command: ["--start-page", "1", "--end-page", "37"]
     volumes:
       - ./data:/workspace/data
     restart: "no"

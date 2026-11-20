@@ -22,7 +22,7 @@ class Auction(Base):
     city: Mapped[str | None] = mapped_column(String(200))
     state: Mapped[str | None] = mapped_column(String(100))
     proposal_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    proposal_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    proposal_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     document_deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     base_total_price: Mapped[Decimal | None] = mapped_column(Numeric(24, 2))
     trust_amount: Mapped[Decimal | None] = mapped_column(Numeric(24, 2))

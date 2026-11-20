@@ -8,7 +8,7 @@ param(
     [int]$StartPage = 1,
 
     [ValidateRange(1, 2147483647)]
-    [int]$EndPage = 3
+    [int]$EndPage = 37
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,7 +34,7 @@ function Show-Help {
     Write-Host "  .\setad.ps1 rebuild               Rebuild images and recreate services"
     Write-Host "  .\setad.ps1 status                Show service status"
     Write-Host "  .\setad.ps1 logs                  Follow service logs (Ctrl+C to stop)"
-    Write-Host "  .\setad.ps1 collect               Fetch pages 1-3 and import latest run"
+    Write-Host "  .\setad.ps1 collect               Fetch all 37 pages and import latest run"
     Write-Host "  .\setad.ps1 collect -StartPage 1 -EndPage 5"
     Write-Host "  .\setad.ps1 build                 Build images without starting services"
     Write-Host ""
@@ -99,7 +99,7 @@ try {
             )
             Invoke-Compose -ComposeArgs @("run", "--rm", "ingest")
             Write-Host "Collection and database import completed." -ForegroundColor Green
-            Write-Host "Refresh http://localhost:5173 to view the current active listings."
+            Write-Host "Refresh http://localhost:5173 to view the keyword-matched listings."
         }
     }
 }
