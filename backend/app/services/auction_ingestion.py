@@ -16,6 +16,7 @@ from app.db.models import Auction, IngestionRun
 from app.services.date_normalization import parse_setad_datetime
 from app.services.ingestion import to_decimal
 from app.services.keyword_matching import matched_keywords
+from app.services.keyword_settings import configured_keywords
 
 AUCTION_CATEGORIES = ("movable", "immovable", "rental", "minor", "clearance")
 SOURCES = {
@@ -45,7 +46,7 @@ def _id(value):
     return str(value) if value is not None and value != "" else None
 
 
-def project_auction(record: dict, category: str) -> tuple[dict | None, str]:
+def project_auction(record: dict, category: str, keywords: tuple[str, ...] | None = None) -> tuple[dict | None, str]:
     """Return normalized row and status. Store all rows, including nonmatches and expired."""
     if category not in AUCTION_CATEGORIES:
         raise ValueError(f"Unknown auction category: {category}")
@@ -137,6 +138,7 @@ def project_auction(record: dict, category: str) -> tuple[dict | None, str]:
         title, description, item_title, asset_type,
         details.get("address"), details.get("visitAddress"),
         record.get("categoryName"),
+        keywords=keywords,
     )
 
     if category == "clearance":
@@ -213,6 +215,7 @@ def import_auction_pages(db: Session, paths: list[Path], category: str, progress
     db.commit()
     run_id = run.id
     try:
+        active_keywords = configured_keywords(db)
         for i, path in enumerate(paths, start=1):
             payload = json.loads(path.read_text(encoding="utf-8"))
             rows = payload.get("content") if category == "clearance" else payload.get("gridModel")
@@ -220,7 +223,7 @@ def import_auction_pages(db: Session, paths: list[Path], category: str, progress
                 raise ValueError(f"Expected array missing in {path}")
             for record in rows:
                 totals["fetched"] += 1
-                item, status = project_auction(record, category)
+                item, status = project_auction(record, category, keywords=active_keywords)
                 if item is None:
                     totals["skipped_missing_id" if status == "missing_id" else "skipped_invalid_record"] += 1
                     continue
