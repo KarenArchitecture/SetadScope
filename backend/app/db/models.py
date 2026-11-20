@@ -138,3 +138,12 @@ class IngestionRun(Base):
     skipped_expired: Mapped[int] = mapped_column(BigInteger, default=0)
     skipped_unknown_deadline: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class AppSetting(Base):
+    """Small, persistent site-wide configuration values."""
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(String(100), primary_key=True)
+    value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
