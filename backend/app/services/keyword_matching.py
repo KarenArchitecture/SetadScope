@@ -16,6 +16,6 @@ def normalize_fa(value: object) -> str:
     text = "".join(ch for ch in text if unicodedata.category(ch) != "Mn")
     return _SPACES.sub(" ", text).strip().casefold()
 
-def matched_keywords(*texts: object) -> list[str]:
+def matched_keywords(*texts: object, keywords: tuple[str, ...] | list[str] | None = None) -> list[str]:
     text = normalize_fa(" ".join(str(v or "") for v in texts))
-    return [word for word in KEYWORDS if re.search(r"(?<!\w)" + re.escape(normalize_fa(word)) + r"(?!\w)", text)]
+    return [word for word in (KEYWORDS if keywords is None else keywords) if re.search(r"(?<!\w)" + re.escape(normalize_fa(word)) + r"(?!\w)", text)]
