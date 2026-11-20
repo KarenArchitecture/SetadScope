@@ -552,8 +552,10 @@ export default function Dashboard({ kind, onNavigate }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
   const lastRefreshedRun = useRef(null);
+  const lastRequestId = useRef(0);
 
   const loadPage = useCallback(async (nextPage = 1) => {
+    const requestId = ++lastRequestId.current;
     setLoading(true);
     setError("");
     try {
@@ -567,15 +569,17 @@ export default function Dashboard({ kind, onNavigate }) {
         page: nextPage,
         pageSize,
       });
+      if (requestId !== lastRequestId.current) return;
       setResult(data);
       setPage(data.page);
     } catch (requestError) {
+      if (requestId !== lastRequestId.current) return;
       setError(
         requestError.response?.data?.detail ||
           "ارتباط با Backend برقرار نشد. از اجرای سرویس‌ها مطمئن شو.",
       );
     } finally {
-      setLoading(false);
+      if (requestId === lastRequestId.current) setLoading(false);
     }
   }, [isTender, auctionCategory, matchedOnly, search, appliedFilters, sortBy, sortDir, pageSize]);
 
@@ -584,8 +588,12 @@ export default function Dashboard({ kind, onNavigate }) {
   }, [loadPage]);
 
   useEffect(() => {
-    getApiHealth().then(() => setApiOnline(true)).catch(() => setApiOnline(false));
-    getCollectionStatus(kind, auctionCategory).then(setCollectionState).catch(() => {});
+    let active = true;
+    getApiHealth().then(() => { if (active) setApiOnline(true); }).catch(() => { if (active) setApiOnline(false); });
+    getCollectionStatus(kind, auctionCategory).then((status) => {
+      if (active) setCollectionState(status);
+    }).catch(() => {});
+    return () => { active = false; };
   }, [kind, auctionCategory]);
 
   useEffect(() => {
@@ -623,7 +631,9 @@ export default function Dashboard({ kind, onNavigate }) {
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
   const fourthStat = isTender
     ? new Set(result.items.map((item) => item.type_name).filter(Boolean)).size
-    : result.items.filter((item) => item.state === "PUBLISHED").length;
+    : auctionCategory === "clearance"
+      ? result.items.filter((item) => item.has_keyword_match).length
+      : result.items.filter((item) => item.state === "PUBLISHED").length;
   const archiveStats = result.archive_stats || {};
   const collectionRunning = ACTIVE_STATES.has(collectionState.status);
 
@@ -749,7 +759,7 @@ export default function Dashboard({ kind, onNavigate }) {
       },
       {
         key: "state",
-        label: "وضعیت",
+        label: auctionCategory === "clearance" ? "کد وضعیت" : "وضعیت",
         sortable: true,
         sortKey: "state",
         render: (item) => (
@@ -763,6 +773,7 @@ export default function Dashboard({ kind, onNavigate }) {
 
   function handleCategoryChange(category) {
     if (category === auctionCategory) return;
+    lastRequestId.current += 1;
     setAuctionCategory(category);
     setSearch("");
     setSearchInput("");
@@ -1026,10 +1037,10 @@ export default function Dashboard({ kind, onNavigate }) {
             />
             <StatCard
               icon={CheckCircle2}
-              label={isTender ? "نوع فراخوان در این صفحه" : "منتشرشده در این صفحه"}
+              label={isTender ? "نوع فراخوان در این صفحه" : auctionCategory === "clearance" ? "مرتبط در این صفحه" : "منتشرشده در این صفحه"}
               value={fourthStat}
-              hint={isTender ? "تعداد انواع فراخوان متمایز" : "تعداد آگهی‌های PUBLISHED"}
-              archiveValue={isTender ? archiveStats.type_count : archiveStats.published_count}
+              hint={isTender ? "تعداد انواع فراخوان متمایز" : auctionCategory === "clearance" ? "طبق کلیدواژه‌های کارفرما" : "تعداد آگهی‌های PUBLISHED"}
+              archiveValue={isTender ? archiveStats.type_count : auctionCategory === "clearance" ? archiveStats.matched_total : archiveStats.published_count}
               tone="amber"
             />
           </section>
