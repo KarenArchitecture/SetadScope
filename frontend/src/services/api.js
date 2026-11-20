@@ -39,3 +39,21 @@ export async function getCollectionStatus() {
   const response = await api.get("/api/collection/status");
   return response.data;
 }
+
+
+export async function getTenders({ search = "", page = 1, pageSize = 20 } = {}) {
+  const response = await api.get("/api/tenders", {
+    params: {
+      search: search || undefined,
+      page,
+      page_size: pageSize,
+    },
+  });
+
+  return response.data;
+}
+
+export async function getTenderById(tenderId) {
+  const response = await api.get("/api/tenders/" + tenderId);
+  return response.data;
+}
