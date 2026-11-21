@@ -246,3 +246,109 @@ def test_legacy_tender_relevance_is_backfilled_during_0007_migration():
         assert tender.has_keyword_match is True
         assert "چوب" in tender.matched_keywords
         assert tender.raw_payload == {"marker": "pre-tender-keyword-migration"}
+
+
+
+def test_global_search_combines_auctions_and_tenders_with_server_side_filters(tmp_path):
+    from app.db.models import Tender
+    from app.services.tender_ingestion import import_tender_pages
+
+    auction_source_id = "73110991"
+    tender_source_id = "79980991"
+    auction_record = {
+        "auctionParty": {
+            "id": int(auction_source_id),
+            "title": "فروش چوب جنگلی برای آزمون جست‌وجوی سراسری",
+            "baseTotalPrice": 125000,
+            "visitCity": {"name": "ساری", "province": {"name": "مازندران"}},
+            "auction": {
+                "id": 819991,
+                "auctionNo": "GS-A-991",
+                "title": "فروش چوب جنگلی برای آزمون جست‌وجوی سراسری",
+                "fromSiteShowDate": "1405/09/02 10:00:00",
+                "toProposalDate": "1405/10/10 13:00:00",
+                "auctioneer": {"name": "سازمان آزمایشی جست‌وجوی سراسری"},
+            },
+        }
+    }
+    tender_record = {
+        "id": int(tender_source_id),
+        "number": "GS-T-991",
+        "title": "تأمین چوب جنگلی برای آزمون جست‌وجوی سراسری",
+        "typeName": "مناقصه عمومی",
+        "organization": "سازمان آزمایشی جست‌وجوی سراسری",
+        "operationProvinceName": "مازندران",
+        "operationCityName": "ساری",
+        "publicNotificationDate": "1405/09/03 09:00:00",
+        "proposalDeadlineDate": "1405/10/12 12:00:00",
+    }
+
+    auction_path = tmp_path / "global-search-auction.json"
+    auction_path.write_text(
+        json.dumps({"gridModel": [auction_record]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    tender_path = tmp_path / "global-search-tender.json"
+    tender_path.write_text(
+        json.dumps({"gridModel": [tender_record]}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    with SessionLocal() as db:
+        try:
+            assert import_auction_pages(db, [auction_path], "movable")["stored"] == 1
+            assert import_tender_pages(db, [tender_path])["stored"] == 1
+
+            client = TestClient(app)
+            response = client.get(
+                "/api/search",
+                params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "page_size": 100},
+            )
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["total"] == 2
+            assert body["summary"] == {"all": 2, "auctions": 1, "tenders": 1}
+            assert {item["record_type"] for item in body["items"]} == {"auction", "tender"}
+            assert len({item["row_key"] for item in body["items"]}) == 2
+            assert all(item["source_label"] for item in body["items"])
+
+            auctions = client.get(
+                "/api/search",
+                params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "kind": "auction"},
+            )
+            assert auctions.status_code == 200
+            assert auctions.json()["total"] == 1
+            assert all(item["record_type"] == "auction" for item in auctions.json()["items"])
+            assert auctions.json()["summary"]["tenders"] == 1
+
+            tenders = client.get(
+                "/api/search",
+                params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "source": "setad_tender"},
+            )
+            assert tenders.status_code == 200
+            assert tenders.json()["total"] == 1
+            assert tenders.json()["items"][0]["record_type"] == "tender"
+
+            matched = client.get(
+                "/api/search",
+                params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "matched_only": "true"},
+            )
+            assert matched.status_code == 200
+            assert matched.json()["total"] == 2
+
+            paged = client.get(
+                "/api/search",
+                params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "page": 2, "page_size": 1},
+            )
+            assert paged.status_code == 200
+            assert paged.json()["total"] == 2
+            assert len(paged.json()["items"]) == 1
+            assert paged.json()["pages"] == 2
+        finally:
+            db.execute(
+                delete(Auction).where(Auction.source_party_id == auction_source_id)
+            )
+            db.execute(
+                delete(Tender).where(Tender.source_tender_id == tender_source_id)
+            )
+            db.commit()
