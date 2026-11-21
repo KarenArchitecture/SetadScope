@@ -147,7 +147,7 @@ export default function App() {
           {page === "settings"
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
-              ? <GlobalSearchPage key={routeVersion} onNavigate={navigate} />
+              ? <GlobalSearchPage key={routeVersion} />
               : <Dashboard key={page} kind={page} />}
         </main>
       </div>
