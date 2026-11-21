@@ -131,6 +131,8 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
     row, status = project_auction(raw, "clearance")
     assert status == "unmatched"
     assert row["source_party_id"] == "4577196"
+    assert row["collection_group"] == "shared"
+    assert row["source"] == "setad_clearance_shared"
     assert row["auction_no"] == "3105001053005896"
     assert row["money_unit"] == "IRR"
     assert row["base_total_price"] == Decimal("9000000")
@@ -155,8 +157,8 @@ def test_endpoints_and_zero_based_pagination():
         if category == "immovable":
             assert params["propertySearchCriteriaDto.auctionType"] == "NON_PROPERTY"
         if category == "clearance":
-            assert params["selectedOrganization"] == "5315"
-            assert params["tagCode"] == "342"
+            assert params["tagCode"] == "341,343"
+            assert "selectedOrganization" not in params
             assert params["boardCode"] == "3"
 
 
@@ -173,7 +175,8 @@ def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
 
     expected_eauc = ("movable", "immovable", "rental", "minor")
     assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_eauc
-    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc + ("clearance",)
+    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc
+    assert CATEGORIES_BY_GROUP["shared"] == ("clearance",)
 
     for group in ("executive_agencies", "amval_tamliki"):
         for category, endpoint in {
@@ -187,12 +190,15 @@ def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
             assert params["page"] == 0
             assert params["rows"] == 30
 
-    clearance_url, clearance_params = request_details("clearance", 0, 5, "amval_tamliki")
+    clearance_url, clearance_params = request_details("clearance", 0, 5, "shared")
     assert "/api/centralboard/cards/" in clearance_url
-    assert clearance_params["selectedOrganization"] == "5315"
-    assert resolve_collection_group("clearance") == "amval_tamliki"
+    assert clearance_params["tagCode"] == "341,343"
+    assert "selectedOrganization" not in clearance_params
+    assert resolve_collection_group("clearance") == "shared"
     with pytest.raises(ValueError, match="not configured"):
         resolve_collection_group("clearance", "executive_agencies")
+    with pytest.raises(ValueError, match="not configured"):
+        resolve_collection_group("clearance", "amval_tamliki")
 
 
 def test_project_auction_records_the_explicit_collection_group():
