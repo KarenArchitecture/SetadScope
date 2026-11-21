@@ -29,8 +29,10 @@ from app.services.keyword_settings import SETTING_KEY, configured_keywords, vali
 from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
 from app.tender_jobs import latest_tender_run_files
 from app.tender_api import router as tenders_router
+from app.search_api import router as global_search_router
 
 app = FastAPI(title="SetadScope API", version="0.5.0")
+app.include_router(global_search_router)
 app.include_router(tenders_router)
 
 ORDER_FIELDS = {
