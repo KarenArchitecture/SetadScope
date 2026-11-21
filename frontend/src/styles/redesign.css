@@ -256,13 +256,45 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   padding: 27px clamp(16px, 2.1vw, 40px) 28px;
 }
 .settings-content { max-width: 1200px; }
+/* Three fixed header zones: breadcrumb (right), global search (center),
+   and account actions (left). Symmetric side tracks keep search geometrically centered. */
 .topbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 470px) minmax(0, 1fr);
+  grid-template-areas: "breadcrumb search actions";
+  align-items: center;
+  gap: 16px;
   padding-inline: clamp(16px, 2.1vw, 40px);
   background: var(--surface);
   border-color: var(--border);
 }
-.topbar__breadcrumb { color: var(--text-muted); font-size: 13px; }
-.topbar__actions { gap: 12px; }
+.topbar__breadcrumb {
+  grid-area: breadcrumb;
+  justify-self: start;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.topbar > .global-search-bar {
+  grid-area: search;
+  justify-self: center;
+  width: 100%;
+  max-width: 470px;
+  min-width: 0;
+  margin: 0;
+}
+.topbar__actions {
+  grid-area: actions;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  white-space: nowrap;
+}
 .theme-toggle {
   color: var(--text-secondary);
   background: var(--surface-soft);
@@ -711,25 +743,34 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
   flex: 0 1 470px;
   margin-inline: auto;
 }
-@media (max-width: 720px) {
+/* Below desktop widths, reserve a complete second row for global search.
+   This prevents the search field from competing with variable-width page labels/actions. */
+@media (max-width: 1100px) {
   .topbar {
     height: auto;
+    min-height: 70px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas:
+      "breadcrumb actions"
+      "search search";
+    gap: 9px 14px;
+    padding-block: 10px;
+  }
+  .topbar > .global-search-bar {
+    width: min(100%, 470px);
+    max-width: 470px;
+  }
+}
+@media (max-width: 720px) {
+  .topbar {
     min-height: 54px;
-    flex-wrap: wrap;
-    align-items: center;
     gap: 9px 12px;
     padding-block: 10px;
   }
-  .topbar__breadcrumb { order: 1; flex: 1 1 auto; }
-  .topbar__actions { order: 2; margin-inline-start: auto; }
-  .topbar > .theme-toggle { order: 2; margin-inline-start: auto; }
-  .topbar > .global-search-bar {
-    order: 3;
-    flex: 1 0 100%;
-    width: 100%;
-    min-width: 0;
-    margin: 0;
-  }
+  .topbar__breadcrumb { font-size: 11px; }
+  .topbar__actions { gap: 8px; }
+  .topbar > .global-search-bar { width: 100%; }
+  .global-search-bar kbd { display: none; }
 }
 
 
