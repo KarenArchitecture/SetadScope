@@ -81,6 +81,9 @@ def emit_progress(**values: Any) -> None:
 
 def create_session(landing_url: str | None = None) -> tuple[requests.Session, str, str]:
     session = requests.Session()
+    # Ignore HTTP(S)_PROXY / ALL_PROXY environment variables for direct requests.
+    session.trust_env = False
+    session.proxies.clear()
     session.headers.update(
         {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
