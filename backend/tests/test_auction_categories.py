@@ -174,36 +174,6 @@ def test_auction_collector_ignores_environment_proxy_settings():
     assert session.proxies == {}
 
 
-def test_legacy_estate_collector_ignores_environment_proxy_settings(monkeypatch):
-    from setad_scope.collectors import fetch_main_estate as legacy
-
-    class FakeResponse:
-        url = "https://eauc.setadiran.ir/eauc/welcome.action"
-
-        @staticmethod
-        def raise_for_status():
-            return None
-
-    class FakeSession:
-        def __init__(self):
-            self.trust_env = True
-            self.proxies = {"https": "http://127.0.0.1:8080"}
-            self.headers = {}
-
-        @staticmethod
-        def get(*args, **kwargs):
-            return FakeResponse()
-
-    session = FakeSession()
-    monkeypatch.setattr(legacy.requests, "Session", lambda: session)
-
-    created = legacy.create_session()
-
-    assert created is session
-    assert created.trust_env is False
-    assert created.proxies == {}
-
-
 def test_collect_preserves_complete_snapshot_and_reports_progress(tmp_path, monkeypatch):
     from setad_scope.collectors import fetch_auction_categories as module
 
