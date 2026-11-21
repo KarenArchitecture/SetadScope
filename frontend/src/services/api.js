@@ -33,6 +33,11 @@ export async function getAuctions(options = {}) {
   return response.data;
 }
 
+export async function getGlobalSearch(options = {}) {
+  const response = await api.get("/api/search", { params: listingParams(options) });
+  return response.data;
+}
+
 export async function getAuctionById(auctionId) {
   const response = await api.get("/api/auctions/" + auctionId);
   return response.data;
