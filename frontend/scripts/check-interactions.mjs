@@ -33,10 +33,15 @@ const extra = listing.indexOf("{advancedSearch}");
 const table = listing.indexOf('<div className="table-wrap">');
 assert.ok(searchEnd !== -1 && searchEnd < extra && extra < table);
 
-// Stick the sidebar to the viewport, with its own vertical scroll area.
+// Keep the sidebar anchored, while only its navigation region can scroll.
+// The scrollbar is visually hidden so it does not compete with the navigation.
 assert.match(redesign, /position:\s*sticky\s*;/);
 assert.match(redesign, /height:\s*100dvh\s*;/);
-assert.match(redesign, /overflow-y:\s*auto\s*;/);
+assert.match(redesign, /\.sidebar-nav\s*\{[^}]*overflow-y:\s*auto/s);
+assert.match(redesign, /\.sidebar-nav::-webkit-scrollbar\s*\{\s*display:\s*none;/);
+assert.match(redesign, /\.sidebar,\s*\.app-shell--collapsed \.sidebar\s*\{[^}]*overflow:\s*hidden;/s);
+assert.match(sidebar, /className="sidebar-nav__icon"/);
+assert.match(sidebar, /className="sidebar-nav__soon"/);
 
 // Theme is switched only after the circular cover finishes,
 // using synchronous style assignment before the next paint.
