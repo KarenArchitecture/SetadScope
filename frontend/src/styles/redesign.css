@@ -657,3 +657,11 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
   min-width: 0;
 }
 .main-content > .topbar { flex: 0 0 auto; }
+
+@media (max-width: 720px) {
+  .topbar__actions { gap: 8px; }
+  .connection-status {
+    font-size: 10px;
+    white-space: nowrap;
+  }
+}
