@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import "./GlobalSearchBar.css";
 
 export default function GlobalSearchBar({ onNavigate, initialQuery = "" }) {
   const [value, setValue] = useState(initialQuery);
