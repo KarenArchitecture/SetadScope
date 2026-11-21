@@ -3,6 +3,7 @@ import { CheckCircle2, KeyRound, LoaderCircle, Plus, RotateCcw, Trash2 } from "l
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import GlobalSearchBar from "../components/GlobalSearchBar";
+import { notifyToast } from "../utils/toast";
 import { getKeywords, updateKeywords } from "../services/api";
 import "./Dashboard.css";
 import "./Settings.css";
@@ -26,7 +27,11 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
         setOriginal(data.keywords);
       }
     }).catch((err) => {
-      if (active) setError(err.response?.data?.detail || "دریافت کلیدواژه‌ها ناموفق بود.");
+      if (active) {
+        const message = err.response?.data?.detail || "دریافت کلیدواژه‌ها ناموفق بود.";
+        setError(message);
+        notifyToast("error", message);
+      }
     }).finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
   }, []);
@@ -51,14 +56,18 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
     setError("");
     setSuccess(false);
     setSaving(true);
+    const toastId = notifyToast("loading", "در حال ارسال و ذخیره کلیدواژه‌ها...", { duration: 0 });
     try {
       const result = await updateKeywords(keywords);
       setKeywords(result.keywords);
       setOriginal(result.keywords);
       setSuccess(true);
+      notifyToast("success", "کلیدواژه‌ها با موفقیت ذخیره شدند.", { id: toastId });
     } catch (err) {
       const detail = err.response?.data?.detail;
-      setError(typeof detail === "string" ? detail : "ذخیره تنظیمات ناموفق بود.");
+      const message = typeof detail === "string" ? detail : "ذخیره تنظیمات ناموفق بود.";
+      setError(message);
+      notifyToast("error", message, { id: toastId, duration: 6500 });
     } finally {
       setSaving(false);
     }
