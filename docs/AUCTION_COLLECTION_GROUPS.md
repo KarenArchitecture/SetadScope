@@ -18,38 +18,55 @@ SetadScope separates an auction's owning collection from its auction category.
 | amval_tamliki | immovable | EAUC | `/eauc/mainImmovable-Load.action` |
 | amval_tamliki | rental | EAUC | `/eauc/mainRental-Load.action` |
 | amval_tamliki | minor | EAUC | `/eauc/mainMinor-Load.action` |
-| amval_tamliki | clearance | Central Board | `/api/centralboard/cards/` |
+| shared | clearance | Central Board | `/api/centralboard/cards/` |
 
-The four EAUC endpoints use the same response adapter and pagination contract in both groups. Each group still gets separate raw snapshots, ingestion runs, and database identities. The Central Board endpoint remains scoped to `selectedOrganization=5315` and is registered only for Amval Tamliki.
+The four EAUC endpoints use the same response adapter and pagination contract in both owning collections. Their collection jobs, raw snapshots, ingestion runs, and database identities remain independent.
 
-Only four categories are currently registered for `executive_agencies`: the supplied endpoint information does not identify a fifth executive-agency category. Add it to that group's registry only after its actual endpoint is known; do not reuse the Amval Tamliki clearance endpoint by assumption.
+The Central Board clearance feed is different: the two observed UI contexts use the same request URL and parameters:
+`tagCode=341,343`, `boardCode=3`, `searchTypeCode=0`, `isLogin=false`, `userRole=0`, `queryText=`, and `sort=score,desc`. It is therefore registered once as `collection_group=shared`, with one collector, one progress state, one ingestion history, and one stored copy of each card. The request does not use `selectedOrganization=5315`.
 
-The live EAUC endpoints were observed returning empty arrays during endpoint discovery. Their current data volume and live pagination still require a later verification run; the registry and parser are based on the supplied request shapes and the existing EAUC fixtures.
+The previous 5315-scoped Central Board records are preserved and migrated from `setad_clearance_5315/amval_tamliki` to `setad_clearance_shared/shared` by Alembic revision `0010`. Raw historical snapshots remain untouched; new shared snapshots are written under `data/raw/auctions/shared/clearance`.
+
+Only four EAUC categories are currently confirmed for each owning collection. The shared Central Board clearance feed is shown as a third source choice in the UI, not duplicated under either owning collection.
+
+The live EAUC endpoints were observed returning empty arrays during endpoint discovery. Their current data volume and live pagination still require a later verification run; the registry and parser are based on the supplied request shapes and existing EAUC fixtures.
 
 ## CLI
 
-Collect one category:
+Collect one category from either owning collection:
+
+```powershell
+.\setad.ps1 collect-category -Category movable -Group executive_agencies
+.\setad.ps1 collect-category -Category movable -Group amval_tamliki
+.\setad.ps1 collect-category -Category immovable -Group amval_tamliki
+```
+
+Collect the shared Central Board feed once:
+
+```powershell
+.\setad.ps1 collect-category -Category clearance -Group shared
+```
+
+The category-only legacy command remains compatible:
+- `collect-category -Category movable` resolves to `executive_agencies`.
+- `collect-category -Category clearance` resolves to `shared`.
+
+The Python collector also supports one category or every category registered for a group:
 
 ```powershell
 python -m setad_scope.collectors.fetch_auction_categories --group executive_agencies --category movable
 python -m setad_scope.collectors.fetch_auction_categories --group amval_tamliki --category movable
-```
-
-Collect every configured category in one group:
-
-```powershell
+python -m setad_scope.collectors.fetch_auction_categories --group shared --category clearance
 python -m setad_scope.collectors.fetch_auction_categories --group executive_agencies
 python -m setad_scope.collectors.fetch_auction_categories --group amval_tamliki
 ```
 
-Import the latest completed snapshot:
+Import only the latest completed snapshot:
 
 ```powershell
 python -m app.auction_category_jobs --group amval_tamliki --category movable
-python -m app.auction_category_jobs --group amval_tamliki
+python -m app.auction_category_jobs --group shared --category clearance
 ```
-
-The category-only legacy CLI remains compatible. A legacy `clearance` invocation resolves to `amval_tamliki`; the other category-only invocations resolve to `executive_agencies`.
 
 ## Storage and idempotency
 
@@ -59,22 +76,19 @@ Auction rows carry both `collection_group` and `category`. Their identity is:
 (collection_group, source, source_party_id)
 ```
 
-This allows the same endpoint/source and listing ID to exist in both groups without one upsert overwriting the other. Existing source identities are conservatively backfilled by Alembic revision `0009`:
+This permits the same EAUC endpoint and source ID to appear independently in the two owning collections without one upsert overwriting the other. The shared Central Board feed has exactly one identity scope, so collecting it from either UI context cannot create a second copy.
 
-- `setad_clearance_5315` → `amval_tamliki`
-- the four existing EAUC sources → `executive_agencies`
-
-The migration aborts if an existing auction has an unrecognized source, rather than silently assigning it to the wrong group. Historical auction ingestion runs are backfilled from their category; tender runs remain ungrouped.
-
-Raw snapshots for the original executive-agency collector keep their existing `data/raw/auctions/{category}` paths. Amval Tamliki snapshots are isolated under `data/raw/auctions/amval_tamliki/{category}`. The importer has a read-only compatibility fallback for the previous Central Board clearance manifest.
+Migration `0009` conservatively backfills the original source identities. Migration `0010` moves historical 5315-scoped clearance records to the shared source without deleting their JSONB payloads or first-seen timestamps. Tender records remain ungrouped.
 
 ## API filters
 
+- `GET /api/auctions?category=movable&collection_group=executive_agencies`
 - `GET /api/auctions?category=movable&collection_group=amval_tamliki`
+- `GET /api/auctions?category=clearance&collection_group=shared`
 - `GET /api/search?kind=auction&collection_group=amval_tamliki`
 - `GET /api/auctions/export.xlsx?category=movable&collection_group=amval_tamliki`
 - `POST /api/collection/auctions/movable/run?collection_group=amval_tamliki`
 - `GET /api/collection/auctions/movable/status?collection_group=amval_tamliki`
-- `GET /api/collection/auctions/history?collection_group=amval_tamliki`
+- `GET /api/collection/auctions/history?collection_group=shared`
 
-For listing and search APIs, `collection_group=all` is the default and includes both groups. Exported rows include the collection group as an explicit column. Existing category-only collection status/run routes remain available and resolve to their historical group.
+For listing and search APIs, `collection_group=all` includes all three scopes. Exported rows include the collection group as an explicit column. Each scope has its own progress and collection history.
