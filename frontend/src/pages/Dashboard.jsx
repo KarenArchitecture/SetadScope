@@ -1078,8 +1078,8 @@ export default function Dashboard({ kind }) {
           {!isTender && (
             <section className="auction-source-selector" aria-label="انتخاب مجموعه یا منبع داده">
               <div className="auction-source-selector__copy">
-                <strong>مجموعه / منبع داده</strong>
-                <small>ابتدا مشخص کن آگهی‌ها از کدام مجموعه دریافت شوند.</small>
+                <strong>مجموعه آگهی</strong>
+                <small>منبع اصلی آگهی‌ها را انتخاب کن؛ حراج از تابلوی مرکزی و به‌صورت مشترک دریافت می‌شود.</small>
               </div>
               <div className="auction-source-selector__options" role="group" aria-label="مجموعه‌های مزایده">
                 {AUCTION_GROUPS.map(({ key, label }) => (
