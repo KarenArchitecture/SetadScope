@@ -17,7 +17,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.db.models import Auction, AppSetting
+from app.db.models import Auction, AppSetting, IngestionRun
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
@@ -80,6 +80,7 @@ def initial_collection_state(kind: str) -> dict:
         "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
         "started_at": None,
         "finished_at": None,
+        "last_updated_at": None,
         "current_page": 0,
         "total_pages": None,
         "pages_completed": 0,
@@ -467,16 +468,50 @@ def health(db: Session = Depends(get_db)):
     return {"status": "ok", "database": "ok"}
 
 
-@app.get("/api/collection/{kind}/status")
-def get_collection_status(kind: Literal["auctions", "tenders"]):
+def latest_successful_collection_at(
+    db: Session,
+    run_kind: str,
+    category: str | None,
+) -> datetime | None:
+    query = select(IngestionRun.finished_at).where(
+        IngestionRun.kind == run_kind,
+        IngestionRun.status == "success",
+        IngestionRun.finished_at.is_not(None),
+    )
+    if category is None:
+        query = query.where(IngestionRun.category.is_(None))
+    else:
+        query = query.where(IngestionRun.category == category)
+    return db.scalar(query.order_by(IngestionRun.finished_at.desc()).limit(1))
+
+
+def collection_status_response(
+    state_key: str,
+    run_kind: str,
+    category: str | None,
+    db: Session,
+) -> dict:
     with collection_lock:
-        return dict(collection_states[kind])
+        state = dict(collection_states[state_key])
+    last_updated = latest_successful_collection_at(db, run_kind, category)
+    state["last_updated_at"] = last_updated.isoformat() if last_updated else None
+    return state
+
+
+@app.get("/api/collection/{kind}/status")
+def get_collection_status(
+    kind: Literal["auctions", "tenders"],
+    db: Session = Depends(get_db),
+):
+    category = "movable" if kind == "auctions" else None
+    return collection_status_response(kind, kind, category, db)
 
 
 @app.post("/api/collection/{kind}/run", status_code=202)
 def start_collection(
     kind: Literal["auctions", "tenders"],
     background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
 ):
     with collection_lock:
         state = collection_states[kind]
@@ -496,37 +531,66 @@ def start_collection(
         )
         response_state = dict(collection_states[kind])
 
+    category = "movable" if kind == "auctions" else None
+    last_updated = latest_successful_collection_at(db, kind, category)
+    response_state["last_updated_at"] = last_updated.isoformat() if last_updated else None
     background_tasks.add_task(run_collection_job, kind)
     return response_state
 
 
 # Backward-compatible aliases: the old untyped endpoints continue to target auctions.
-# Category-specific collection endpoints. Existing /api/collection/auctions aliases movable.
+# Category-specific collection endpoints.
 @app.get("/api/collection/auctions/{category}/status")
 def get_auction_category_status(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
+    db: Session = Depends(get_db),
 ):
-    kind = "auctions" if category == "movable" else category
-    return get_collection_status(kind)
+    state_key = "auctions" if category == "movable" else category
+    return collection_status_response(state_key, "auctions", category, db)
 
 
 @app.post("/api/collection/auctions/{category}/run", status_code=202)
 def start_auction_category_collection(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
     background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
 ):
-    kind = "auctions" if category == "movable" else category
-    return start_collection(kind, background_tasks)
+    state_key = "auctions" if category == "movable" else category
+    with collection_lock:
+        state = collection_states[state_key]
+        if state["status"] in {"collecting", "importing"}:
+            raise HTTPException(
+                status_code=409,
+                detail=f"A {category} collection job is already running.",
+            )
+        collection_states[state_key] = initial_collection_state(state_key)
+        collection_states[state_key].update(
+            {
+                "status": "collecting",
+                "phase": "collecting",
+                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+            }
+        )
+        response_state = dict(collection_states[state_key])
+
+    last_updated = latest_successful_collection_at(db, "auctions", category)
+    response_state["last_updated_at"] = last_updated.isoformat() if last_updated else None
+    background_tasks.add_task(run_collection_job, state_key)
+    return response_state
 
 
 @app.get("/api/collection/status")
-def get_auction_collection_status():
-    return get_collection_status("auctions")
+def get_auction_collection_status(db: Session = Depends(get_db)):
+    return collection_status_response("auctions", "auctions", "movable", db)
 
 
 @app.post("/api/collection/run", status_code=202)
-def start_auction_collection(background_tasks: BackgroundTasks):
-    return start_collection("auctions", background_tasks)
+def start_auction_collection(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    return start_auction_category_collection("movable", background_tasks, db)
 
 
 @app.get("/api/auctions")
