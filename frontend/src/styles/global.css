@@ -1,53 +1,81 @@
 @import url("https://fonts.googleapis.com/css2?family=Vazirmatn:wght@400;500;600;700;800&display=swap");
 
-:root {
+/* Single source of truth for SetadScope's light/dark color palette.
+   Keep theme variables here: CSS import order must not restore legacy navy. */
+:root,
+html[data-theme="light"] {
+  color-scheme: light;
   font-family: "Vazirmatn", Tahoma, sans-serif;
-  color: #26364b;
-  background: #f4f6fa;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
-  --page-bg: #f4f6fa;
-  --border: #e6eaf0;
-  --text-primary: #1d2b40;
-  --text-muted: #8491a2;
+
+  --page-bg: #f5f4f1;
+  --surface: #ffffff;
+  --surface-soft: #f6f5f2;
+  --surface-hover: #eeece7;
+  --sidebar-bg: #eae8e3;
+  --border: #dcd9d2;
+  --text-primary: #262523;
+  --text-secondary: #55534e;
+  --text-muted: #6e6b64;
+
+  --accent: #785839;
+  --accent-hover: #60452f;
+  --accent-ink: #ffffff;
+  --accent-soft: #f0e8de;
+  --accent-ring: rgba(120, 88, 57, .2);
+  --selected-bg: #f0e8de;
+  --shadow: rgba(26, 24, 21, .065);
+
+  --danger-bg: #fff0f0;
+  --success-bg: #eaf6ef;
+}
+
+html[data-theme="dark"] {
+  color-scheme: dark;
+  --page-bg: #171717;
+  --surface: #202020;
+  --surface-soft: #272727;
+  --surface-hover: #303030;
+  --sidebar-bg: #1b1b1b;
+  --border: #353535;
+  --text-primary: #f2f0ec;
+  --text-secondary: #cbc7c0;
+  --text-muted: #aaa59d;
+
+  --accent: #d5b783;
+  --accent-hover: #e5c99a;
+  --accent-ink: #1b1916;
+  --accent-soft: #34302a;
+  --accent-ring: rgba(213, 183, 131, .22);
+  --selected-bg: #34302a;
+  --shadow: rgba(0, 0, 0, .17);
+
+  --danger-bg: #42262c;
+  --success-bg: #193a34;
 }
 
 * { box-sizing: border-box; }
-/* Keep the viewport width constant when tables briefly shrink during loading. */
 html {
   min-width: 360px;
   min-height: 100%;
   overflow-y: scroll;
   scrollbar-gutter: stable;
+  color: var(--text-primary);
+  background: var(--page-bg);
 }
-body { min-width: 360px; min-height: 100vh; margin: 0; }
-body, button, input { font-family: "Vazirmatn", Tahoma, sans-serif; }
-button, input { font-size: inherit; }
-button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #9fc1f4; outline-offset: 2px; }
-::selection { color: #17365f; background: #d9e8ff; }
-
-
-:root {
-  --surface: #fff;
-  --surface-soft: #f8fafc;
-  --text-secondary: #607188;
-  --selected-bg: #eff6ff;
-  --danger-bg: #fff0f0;
-  --success-bg: #eaf6ef;
+body {
+  min-width: 360px;
+  min-height: 100vh;
+  margin: 0;
+  color: var(--text-primary);
+  background: var(--page-bg);
 }
-html[data-theme="dark"] {
-  color-scheme: dark;
-  background: #0d1523;
-  color: #d8e5f5;
-  --page-bg: #0d1523;
-  --surface: #162235;
-  --surface-soft: #1c2a3f;
-  --border: #2e3e55;
-  --text-primary: #ecf3ff;
-  --text-secondary: #bfd0e4;
-  --text-muted: #9aafc9;
-  --selected-bg: #1f395a;
-  --danger-bg: #42262c;
-  --success-bg: #193a34;
+body, button, input, select, textarea { font-family: "Vazirmatn", Tahoma, sans-serif; }
+button, input, select, textarea { font-size: inherit; }
+button:focus-visible, a:focus-visible, input:focus-visible,
+select:focus-visible, textarea:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
-html[data-theme="dark"] body { background: var(--page-bg); color: var(--text-primary); }
+::selection { color: var(--accent-ink); background: var(--accent); }
