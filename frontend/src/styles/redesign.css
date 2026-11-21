@@ -392,3 +392,36 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) {
   .sidebar, .sidebar__collapse, .filters-panel__collapsible, .search-bar { transition: none; }
 }
+
+
+/* Override older dark-mode selectors with greater specificity so the accent
+   remains warm bronze in every interactive state, not the previous blue. */
+html[data-theme="dark"] .auction-category-nav__tab--active,
+html[data-theme="dark"] .auction-category-nav__tab--active:hover,
+html[data-theme="dark"] .jalali-calendar__day--selected,
+html[data-theme="dark"] .jalali-calendar__day--selected:hover {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+html[data-theme="dark"] .auction-category-nav__tab:hover:not(.auction-category-nav__tab--active),
+html[data-theme="dark"] .filters-reset:hover:not(:disabled),
+html[data-theme="dark"] .jalali-calendar__day:hover:not(.jalali-calendar__day--selected) {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--accent-soft);
+}
+html[data-theme="dark"] .filters-panel__toggle-icon {
+  color: var(--accent);
+  border-color: var(--border);
+  background: var(--accent-soft);
+}
+html[data-theme="dark"] .search-bar:focus-within {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+html[data-theme="dark"] .jalali-calendar__day--selected:hover { color: var(--accent-ink); }
+/* The earlier stylesheet colors this selected-day icon separately. */
+html[data-theme="dark"] .jalali-calendar__day--today { color: var(--accent); }
+html[data-theme="dark"] .jalali-calendar__day--selected { color: var(--accent-ink); }
