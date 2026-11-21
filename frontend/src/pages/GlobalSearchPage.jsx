@@ -296,8 +296,8 @@ export default function GlobalSearchPage({
               </p>
             </div>
             <div className="global-search-total">
-              <strong>{formatNumber(summary.all)}</strong>
-              <span>نتیجه منطبق با جست‌وجو و فیلترها</span>
+              <strong>{formatNumber(result.total)}</strong>
+              <span>نتیجه در نمای انتخاب‌شده</span>
             </div>
           </section>
 
