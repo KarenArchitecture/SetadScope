@@ -19,7 +19,10 @@ const settings = read("src/pages/Settings.jsx");
 assert.equal((dashboard.match(/id="filter-matched-only"/g) || []).length, 1);
 assert.match(dashboard, /onMatchedOnlyChange=\{\(checked\) => \{ setMatchedOnly\(checked\); setPage\(1\); \}\}/);
 assert.match(dashboard, /activeFilterCount = [^;\n]+Number\(matchedOnly\)/);
-assert.match(dashboard, /function handleResetFilters\(\) \{[^}]*setMatchedOnly\(false\)/s);
+const resetStart = dashboard.indexOf("function handleResetFilters()");
+const resetEnd = dashboard.indexOf("function handleSort(", resetStart);
+assert.ok(resetStart > 0 && resetEnd > resetStart);
+assert.match(dashboard.slice(resetStart, resetEnd), /setMatchedOnly\(false\)/);
 assert.match(dashboard, /advancedSearch=\{\s*<FiltersPanel/);
 
 // The entire advanced-search panel is passed into the listing after
