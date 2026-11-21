@@ -13,6 +13,7 @@ const transition = read("src/components/ThemeTransition.jsx");
 const transitionCss = read("src/components/ThemeTransition.css");
 const redesign = read("src/styles/redesign.css");
 const settings = read("src/pages/Settings.jsx");
+const topbar = read("src/components/Topbar.jsx");
 
 // One keyword-relevance control, on both auction/tender pages,
 // integrated into the advanced-search header rather than the category tabs.
@@ -62,13 +63,21 @@ const api = read("src/services/api.js");
 const searchApi = read("../backend/app/search_api.py");
 assert.match(app, /pathname\.startsWith\("\/search"\)/);
 assert.match(app, /<GlobalSearchPage key=\{routeVersion\}/);
-assert.match(dashboard, /<GlobalSearchBar onNavigate=\{onNavigate\}/);
-assert.match(settings, /<GlobalSearchBar onNavigate=\{onNavigate\}/);
-assert.match(globalSearchPage, /<GlobalSearchBar onNavigate=\{onNavigate\} initialQuery=\{query\}/);
+assert.match(app, /<Topbar/);
+assert.match(topbar, /<GlobalSearchBar onNavigate=\{onNavigate\} initialQuery=\{initialQuery\}/);
+assert.match(topbar, /اتصال به سرور برقرار است/);
+assert.doesNotMatch(dashboard, /<header className="topbar"/);
+assert.doesNotMatch(settings, /<header className="topbar"/);
+assert.doesNotMatch(globalSearchPage, /<header className="topbar"/);
+assert.doesNotMatch(dashboard, /<GlobalSearchBar/);
+assert.doesNotMatch(settings, /<GlobalSearchBar/);
+assert.doesNotMatch(globalSearchPage, /<GlobalSearchBar/);
+assert.match(app, /<Sidebar/);
+assert.match(sidebar, /page: "search", path: "\/search"/);
+assert.doesNotMatch(sidebar, /وضعیت پردازش/);
 assert.match(globalSearchBar, /Ctrl K/);
 assert.match(globalSearchBar, /onNavigate\(query \? "\/search\?q="/);
 assert.match(globalSearchBar, /event\.key\.toLowerCase\(\) === "k"/);
-assert.match(sidebar, /page: "search", path: "\/search"/);
 assert.match(api, /api\.get\("\/api\/search"/);
 assert.match(searchApi, /@router\.get\("\/api\/search"\)/);
 assert.match(searchApi, /union_all\(auction_query, tender_query\)/);
