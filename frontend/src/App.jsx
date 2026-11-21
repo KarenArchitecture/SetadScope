@@ -3,6 +3,7 @@ import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
 import GlobalSearchPage from "./pages/GlobalSearchPage";
+import ToastViewport from "./components/ToastViewport";
 
 function resolvePage() {
   if (window.location.pathname.startsWith("/search")) return "search";
@@ -101,6 +102,7 @@ export default function App() {
       {themeTransition && (
         <ThemeTransition transition={themeTransition} onAnimationEnd={onThemeTransitionEnd} />
       )}
+      <ToastViewport />
     </>
   );
 }
