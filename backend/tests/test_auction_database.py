@@ -191,3 +191,44 @@ def test_saved_keyword_settings_affect_next_auction_import(tmp_path):
             elif setting is not None:
                 setting.value = previous
             db.commit()
+
+
+
+def test_tender_relevance_filter_and_export_share_same_dataset(tmp_path):
+    """Tender checkbox must filter database results and downloadable Excel alike."""
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+    from app.db.models import Tender
+    from app.services.tender_ingestion import import_tender_pages
+
+    rows = [
+        {"id": 799901, "number": "T-799901", "title": "تامین چوب و نهال", "typeName": "عمومی"},
+        {"id": 799902, "number": "T-799902", "title": "خرید رایانه اداری", "typeName": "عمومی"},
+    ]
+    raw = tmp_path / "tender-relevance.json"
+    raw.write_text(json.dumps({"gridModel": rows}, ensure_ascii=False), encoding="utf-8")
+    with SessionLocal() as db:
+        try:
+            result = import_tender_pages(db, [raw])
+            assert result["stored"] == 2
+
+            client = TestClient(app)
+            matched = client.get("/api/tenders", params={"matched_only": "true", "search": "T-7999"})
+            assert matched.status_code == 200, matched.text
+            source_ids = {r["source_tender_id"] for r in matched.json()["items"]}
+            assert source_ids == {"799901"}
+            assert matched.json()["items"][0]["matched_keywords"]
+
+            unfiltered = client.get("/api/tenders", params={"matched_only": "false", "search": "T-7999"})
+            assert unfiltered.status_code == 200
+            assert {r["source_tender_id"] for r in unfiltered.json()["items"]} == {"799901", "799902"}
+
+            export = client.get("/api/tenders/export.xlsx", params={"matched_only": "true", "search": "T-7999"})
+            assert export.status_code == 200
+            sheet = load_workbook(BytesIO(export.content)).active
+            assert sheet.max_row == 2
+            assert sheet["B2"].value == "T-799901"
+        finally:
+            db.execute(delete(Tender).where(Tender.source_tender_id.in_(["799901", "799902"])))
+            db.commit()
