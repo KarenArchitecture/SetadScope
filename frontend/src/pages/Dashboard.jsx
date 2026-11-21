@@ -632,7 +632,7 @@ export default function Dashboard({ kind }) {
       if (requestId !== lastRequestId.current) return;
       setError(
         requestError.response?.data?.detail ||
-          "ارتباط با Backend برقرار نشد. از اجرای سرویس‌ها مطمئن شو.",
+          "ارتباط با سرور برقرار نشد. از در دسترس بودن سرویس‌ها مطمئن شو.",
       );
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
