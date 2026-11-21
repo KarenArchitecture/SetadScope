@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from decimal import Decimal
 from typing import Literal
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import Numeric, String, Text, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
 
@@ -165,7 +164,6 @@ def global_search(
     db: Session = Depends(get_db),
 ):
     if sort_by not in SORT_COLUMNS:
-        from fastapi import HTTPException
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
 
     rows = _searchable_rows(search, source, province, city, category, status, matched_only)
