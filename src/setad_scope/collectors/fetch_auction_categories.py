@@ -1,13 +1,8 @@
-"""Public Setad auction collection, paginated per category with raw snapshots.
-
-Four eauc grid endpoints and the separate centralboard clearance cards endpoint.
-Capture-only; database writes are delegated to auction_ingestion.py.
-"""
+"""Multi-group Setad auction collection with shared pagination and raw snapshots."""
 from __future__ import annotations
 
 import argparse
 import json
-import math
 import sys
 import time
 from datetime import datetime
@@ -15,6 +10,16 @@ from pathlib import Path
 from typing import Any
 
 import requests
+
+from .auction_sources.parsers import extract_rows, page_totals as adapter_page_totals, reported_page
+from .auction_sources.registry import (
+    ALL_CATEGORIES,
+    COLLECTION_GROUPS,
+    DEFAULT_COLLECTION_GROUP,
+    categories_for_group,
+    resolve_collection_group,
+    source_for,
+)
 
 BASE_EAUC = "https://eauc.setadiran.ir"
 BASE_GW = "https://gw.setadiran.ir"
@@ -25,7 +30,7 @@ ROUTES = {
     "rental": "/eauc/mainRental-Load.action",
     "minor": "/eauc/mainMinor-Load.action",
 }
-CATEGORIES = tuple(ROUTES) + ("clearance",)
+CATEGORIES = ALL_CATEGORIES
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RAW_DIR = PROJECT_ROOT / "data" / "raw" / "auctions"
 PROGRESS_PREFIX = "PROGRESS_JSON:"
@@ -35,94 +40,99 @@ def emit_progress(**values):
     print(PROGRESS_PREFIX + json.dumps(values, ensure_ascii=False), flush=True)
 
 
-def create_session(category: str) -> requests.Session:
+def category_raw_dir(collection_group: str, category: str) -> Path:
+    # Keep the original executive-agency layout readable by existing scripts.
+    if collection_group == DEFAULT_COLLECTION_GROUP:
+        return RAW_DIR / category
+    return RAW_DIR / collection_group / category
+
+
+def create_session(category: str, collection_group: str | None = None) -> requests.Session:
+    source = source_for(category, collection_group)
     session = requests.Session()
-    # Ignore HTTP(S)_PROXY / ALL_PROXY environment variables. The collector
-    # should use the host/container default route instead of app-level proxies.
+    # Ignore HTTP(S)_PROXY / ALL_PROXY environment variables. This mirrors the
+    # known-good collector route and avoids unexpected application proxies.
     session.trust_env = False
     session.proxies.clear()
     session.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; SetadScope/0.5; public information monitoring)",
+        "User-Agent": "Mozilla/5.0 (compatible; SetadScope/0.6; public information monitoring)",
         "Accept": "application/json, text/javascript, */*;q=0.01",
     })
-    if category != "clearance":
+    if source.adapter == "eauc":
         session.headers["X-Requested-With"] = "XMLHttpRequest"
-        landing = session.get(LANDING_URL, timeout=(15, 45))
+        landing = session.get(source.landing_url or LANDING_URL, timeout=(15, 45))
         landing.raise_for_status()
         session.headers["Referer"] = landing.url
     else:
-        session.headers["Referer"] = "https://fe.setadiran.ir/centralboard/"
+        session.headers["Referer"] = source.referer or "https://fe.setadiran.ir/centralboard/"
     return session
 
 
-def request_details(category: str, page: int, rows: int) -> tuple[str, dict]:
-    stamp = int(time.time() * 1000)
-    if category == "clearance":
-        return BASE_GW + "/api/centralboard/cards/", {
-            "tagCode": "342",
-            "selectedOrganization": "5315",  # intentionally scoped to اموال تملیکی
-            "boardCode": "3",
-            "searchTypeCode": "0",
-            "isLogin": "false",
-            "userRole": "0",
-            "queryText": "",
-            "pageNumber": page,
-            "pageSize": rows,
-            "sort": "score,desc",
-        }
-    params = {
-        "_search": "false",
-        "nd": stamp,
-        "rows": rows,
-        "page": page,
-        "sidx": "",
-        "sord": "asc",
-        "_": stamp,
-    }
-    if category == "immovable":
-        params["propertySearchCriteriaDto.auctionType"] = "NON_PROPERTY"
-    return BASE_EAUC + ROUTES[category], params
+def request_details(
+    category: str,
+    page: int,
+    rows: int,
+    collection_group: str | None = None,
+) -> tuple[str, dict]:
+    source = source_for(category, collection_group)
+    url = source.base_url + source.path
+    params = dict(source.fixed_params)
+    if source.adapter == "centralboard":
+        params.update({"pageNumber": page, "pageSize": rows})
+    else:
+        stamp = int(time.time() * 1000)
+        params.update({
+            "_search": "false",
+            "nd": stamp,
+            "rows": rows,
+            "page": page,
+            "sidx": "",
+            "sord": "asc",
+            "_": stamp,
+        })
+    return url, params
 
 
-def fetch_page(session: requests.Session, category: str, page: int, rows: int = 30) -> dict[str, Any]:
-    url, params = request_details(category, page, rows)
+def fetch_page(
+    session: requests.Session,
+    category: str,
+    page: int,
+    rows: int = 30,
+    collection_group: str | None = None,
+) -> dict[str, Any]:
+    source = source_for(category, collection_group)
+    url, params = request_details(category, page, rows, collection_group)
     last_error = None
     for attempt in range(1, 4):
         try:
             response = session.get(url, params=params, timeout=(20, 90))
             response.raise_for_status()
             payload = response.json()
-            key = "content" if category == "clearance" else "gridModel"
-            if not isinstance(payload, dict) or not isinstance(payload.get(key), list):
-                raise ValueError("Response did not contain expected " + key + " list")
+            extract_rows(payload, source.adapter)
             return payload
         except (requests.RequestException, ValueError) as exc:
             last_error = exc
             if attempt < 3:
                 time.sleep(attempt * 2)
-    raise RuntimeError(f"{category} page {page} failed after retries: {last_error}")
+    raise RuntimeError(f"{collection_group or source.collection_group}/{category} page {page} failed after retries: {last_error}")
 
 
-def page_totals(payload: dict, category: str, rows: int) -> tuple[int, int | None]:
-    if category == "clearance":
-        page_count = payload.get("totalPages")
-        record_count = payload.get("totalElements")
-    else:
-        page_count = payload.get("total")
-        record_count = payload.get("records")
-    try:
-        total_records = int(record_count)
-    except (TypeError, ValueError):
-        total_records = None
-    try:
-        total_pages = int(page_count)
-    except (TypeError, ValueError):
-        total_pages = 0
-    if total_pages < 1 and total_records is not None:
-        total_pages = max(1, math.ceil(total_records / rows))
-    if total_pages < 1:
-        raise RuntimeError("API did not return a usable page or record count")
-    return total_pages, total_records
+def page_totals(
+    payload: dict,
+    category: str,
+    rows: int,
+    collection_group: str | None = None,
+) -> tuple[int, int | None]:
+    source = source_for(category, collection_group)
+    return adapter_page_totals(payload, source.adapter, rows)
+
+
+def _fetch_for_group(session, category: str, page: int, rows: int, collection_group: str):
+    # Preserve the four-argument call contract used by existing collector tests
+    # and integrations for the original executive-agency collection.
+    if collection_group == DEFAULT_COLLECTION_GROUP:
+        return fetch_page(session, category, page, rows)
+    return fetch_page(session, category, page, rows, collection_group)
 
 
 def collect(
@@ -133,20 +143,20 @@ def collect(
     delay: float = 0.7,
     raw_dir: Path | None = None,
     session: requests.Session | None = None,
+    collection_group: str | None = None,
 ) -> dict:
-    if category not in CATEGORIES:
-        raise ValueError("Unsupported category")
+    group = resolve_collection_group(category, collection_group)
+    source = source_for(category, group)
     if start_page < 0 or (end_page is not None and end_page < start_page):
         raise ValueError("Invalid zero-based page range")
     if delay < 0:
         raise ValueError("delay cannot be negative")
-    rows = rows or (5 if category == "clearance" else 30)
+    rows = source.default_rows if rows is None else rows
     if rows < 1 or rows > 100:
         raise ValueError("rows must be between 1 and 100")
-    raw_dir = raw_dir or RAW_DIR / category
+    raw_dir = raw_dir or category_raw_dir(group, category)
     raw_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    # No manifest is written on failure: importing a partial fetch is forbidden.
     summary_path = raw_dir / f"{category}_run_{stamp}.json"
     page_summaries = []
     total_fetched = 0
@@ -154,34 +164,40 @@ def collect(
     total_pages = None
 
     emit_progress(
-        phase="collecting", current_page=0, total_pages=None,
-        pages_completed=0, records_fetched=0, records_total=None,
-        progress_percent=0, message=f"در حال اتصال به منبع {category}...",
+        collection_group=group,
+        category=category,
+        phase="collecting",
+        current_page=0,
+        total_pages=None,
+        pages_completed=0,
+        records_fetched=0,
+        records_total=None,
+        progress_percent=0,
+        message=f"در حال اتصال به منبع {group}/{category}...",
     )
 
-    active_session = session or create_session(category)
+    active_session = session or create_session(category, group)
     if isinstance(active_session, requests.Session):
         active_session.trust_env = False
         active_session.proxies.clear()
-    first = fetch_page(active_session, category, start_page, rows)
-    total_pages, total_records = page_totals(first, category, rows)
-    # eauc browser requests page=0, but the captured response reports page=1.
-    # The server clamps page 0 to the first 1-based page. Avoid requesting
-    # page=1 again and include the final page=total_pages.
-    reported_page = first.get("page")
+    first = _fetch_for_group(active_session, category, start_page, rows, group)
+    total_pages, total_records = page_totals(first, category, rows, group)
+    first_reported_page = reported_page(first, source.adapter)
     try:
-        reported_page = int(reported_page)
+        first_reported_page = int(first_reported_page)
     except (TypeError, ValueError):
-        reported_page = start_page
-    if category == "clearance":
+        first_reported_page = start_page
+
+    if source.adapter == "centralboard":
         effective_start = start_page
         final_source_page = total_pages - 1
-    elif start_page == 0 and reported_page == 1:
+    elif start_page == 0 and first_reported_page == 1:
+        # EAUC accepts page=0 but returns the first page as page=1.
         effective_start = 1
         final_source_page = total_pages
     else:
         effective_start = start_page
-        final_source_page = total_pages if reported_page >= 1 else total_pages - 1
+        final_source_page = total_pages if first_reported_page >= 1 else total_pages - 1
 
     last = min(end_page if end_page is not None else final_source_page, final_source_page)
     if effective_start > final_source_page:
@@ -189,15 +205,15 @@ def collect(
 
     try:
         for page in range(effective_start, last + 1):
-            payload = first if page == effective_start else fetch_page(active_session, category, page, rows)
-            if category != "clearance":
+            payload = first if page == effective_start else _fetch_for_group(active_session, category, page, rows, group)
+            if source.adapter == "eauc":
                 actual_page = payload.get("page")
                 if actual_page is not None and int(actual_page) != page:
                     raise RuntimeError(
-                        f"Requested eauc page {page}, but API reported page {actual_page}; "
+                        f"Requested EAUC page {page}, but API reported page {actual_page}; "
                         "aborting to avoid duplicate or missing pages."
                     )
-            items = payload["content" if category == "clearance" else "gridModel"]
+            items = extract_rows(payload, source.adapter)
             path = raw_dir / f"{category}_page_{page}_{stamp}.json"
             path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
             total_fetched += len(items)
@@ -209,34 +225,44 @@ def collect(
             completed = len(page_summaries)
             expected = last - effective_start + 1
             emit_progress(
-                phase="collecting", current_page=completed,
-                total_pages=expected, pages_completed=completed,
-                records_fetched=total_fetched, records_total=total_records,
+                collection_group=group,
+                category=category,
+                phase="collecting",
+                current_page=completed,
+                total_pages=expected,
+                pages_completed=completed,
+                records_fetched=total_fetched,
+                records_total=total_records,
                 progress_percent=int(85 * completed / expected),
-                message=f"دریافت {completed} از {expected} صفحه {category}",
+                message=f"دریافت {completed} از {expected} صفحه {group}/{category}",
             )
             if page < last and delay:
                 time.sleep(delay)
         summary = {
-            "category": category, "started_at": stamp,
+            "collection_group": group,
+            "category": category,
+            "source": source.source,
+            "started_at": stamp,
             "total_pages_reported": total_pages,
             "total_records_reported": total_records,
-            "rows_saved": total_fetched, "pages": page_summaries,
+            "rows_saved": total_fetched,
+            "pages": page_summaries,
             "complete_source": start_page == 0 and last == final_source_page,
             "source_page_base": final_source_page - total_pages + 1,
         }
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
-        print(f"FETCH SUCCESS {category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
+        print(f"FETCH SUCCESS {group}/{category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
         return summary
     except Exception:
-        # Partial pages stay on disk for forensic troubleshooting but are never
-        # pointed to by a completed run manifest.
+        # Partial pages remain available for diagnostics, but no successful
+        # manifest is written, so ingestion cannot mistake them for a snapshot.
         raise
 
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Fetch Setad auction listing categories")
-    parser.add_argument("--category", choices=CATEGORIES, required=True)
+    parser.add_argument("--group", choices=COLLECTION_GROUPS, default=None)
+    parser.add_argument("--category", choices=CATEGORIES, default=None)
     parser.add_argument("--start-page", type=int, default=0)
     parser.add_argument("--end-page", type=int, default=None)
     parser.add_argument("--rows", type=int, default=None)
@@ -247,12 +273,44 @@ def parse_args():
 
 def main() -> int:
     args = parse_args()
-    try:
-        collect(args.category, args.start_page, args.end_page, args.rows, args.delay, args.raw_dir)
-        return 0
-    except Exception as exc:
-        print(f"FETCH FAILED: {exc}", file=sys.stderr, flush=True)
+    group = args.group
+    if args.category:
+        try:
+            group = resolve_collection_group(args.category, group)
+            collect(
+                args.category,
+                args.start_page,
+                args.end_page,
+                args.rows,
+                args.delay,
+                args.raw_dir,
+                collection_group=group,
+            )
+            return 0
+        except Exception as exc:
+            print(f"FETCH FAILED: {exc}", file=sys.stderr, flush=True)
+            return 1
+
+    group = group or DEFAULT_COLLECTION_GROUP
+    failures = []
+    for category in categories_for_group(group):
+        try:
+            collect(
+                category,
+                args.start_page,
+                args.end_page,
+                args.rows,
+                args.delay,
+                args.raw_dir,
+                collection_group=group,
+            )
+        except Exception as exc:
+            failures.append(f"{category}: {exc}")
+            print(f"FETCH FAILED {group}/{category}: {exc}", file=sys.stderr, flush=True)
+    if failures:
+        print("One or more auction sources failed: " + " | ".join(failures), file=sys.stderr, flush=True)
         return 1
+    return 0
 
 
 if __name__ == "__main__":
