@@ -90,6 +90,8 @@ class Tender(Base):
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     source: Mapped[str] = mapped_column(String(40), default="setad_tender", nullable=False)
     source_tender_id: Mapped[str] = mapped_column(String(120), nullable=False)
+    has_keyword_match: Mapped[bool] = mapped_column(nullable=False, default=False, server_default="false")
+    matched_keywords: Mapped[list[str]] = mapped_column(JSONB, nullable=False, default=list, server_default="'[]'::jsonb")
     tender_number: Mapped[str | None] = mapped_column(String(120))
     title: Mapped[str | None] = mapped_column(Text)
     tender_type: Mapped[str | None] = mapped_column(String(120))
@@ -122,6 +124,7 @@ class Tender(Base):
         Index("ix_tenders_proposal_deadline_at", "proposal_deadline_at"),
         Index("ix_tenders_location", "province", "city"),
         Index("ix_tenders_state_type", "state", "type_name"),
+        Index("ix_tenders_keyword_match", "has_keyword_match"),
     )
 
 
