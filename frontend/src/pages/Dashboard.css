@@ -1503,3 +1503,33 @@
   .theme-toggle span { display: none; }
   .topbar__actions { gap: 8px; }
 }
+
+
+/* Last successful collection timestamp sits directly beneath its action. */
+.collection-action {
+  display: flex;
+  flex: 0 0 auto;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 5px;
+}
+.collection-action__last-updated {
+  max-width: 100%;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  text-align: right;
+  direction: rtl;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 720px) {
+  .collection-action {
+    align-items: flex-start;
+  }
+  .collection-action__last-updated {
+    text-align: right;
+    white-space: normal;
+  }
+}
