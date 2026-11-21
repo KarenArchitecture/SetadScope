@@ -137,10 +137,12 @@ Both /auctions and /tenders use server-side sorting, filtering, and pagination.
 Setad timestamps such as fromProposalDate, toProposalDate, fromSiteShowDate, toSiteShowDate, publishStartDate, publishFinishDate, winnerAnnounceDate, openedDate, openingDate, lastModifyDate, createDate, and trustOpenedDate are parsed where present. Tender publicNotificationDate, documentsDeadlineDate, proposalDeadlineDate, and openingDate are parsed as well. Original source values remain available in the raw JSONB payload and the tender source-text columns.
 
 
-## All five auction categories (November 2026)
+## Auction categories and collection groups (November 2026)
 
-The auction workspace now has five category tabs. Each tab has its own collection job,
-live progress, filters, sorting, Excel export and stored data. The old `setad_main_estate`
+The auction workspace separates the owning collection from the listing category.
+The two owning collections each have four EAUC categories and independent collection
+jobs, progress, histories and stored identities. The Central Board clearance feed is
+a third, shared source and is collected only once. The old `setad_main_estate`
 records remain in `auctions`, classified as `movable` by migration 0005.
 
 | Category | Source | Source ID | Amount |
@@ -151,10 +153,7 @@ records remain in `auctions`, classified as `movable` by migration 0005.
 | minor | eauc mainMinor-Load | row.id | totalBasePrice |
 | clearance | gw centralboard/cards | cartId | basePrice (IRR) |
 
-The central-board clearance collector is **only scoped to organization 5315**
-(سازمان جمع‌آوری و فروش اموال تملیکی); it is not an all-organizations crawler.
-The URLs and source-specific parameters come from the supplied browser Network captures.
-The site may require further live verification of access or session behavior.
+The Central Board clearance feed is a **shared source**. Both observed UI contexts use the same request with `tagCode=341,343` and the same response shape, so SetadScope collects it once under `collection_group=shared`. It is not duplicated under either owning collection. The previous 5315-scoped records are preserved and reclassified by Alembic revision 0010. Live access and pagination still require verification on the target network.
 
 The database keeps **all fetched records**, matching or not. `has_keyword_match` and
 `matched_keywords` are derived metadata; the dashboard shows only matched items by
