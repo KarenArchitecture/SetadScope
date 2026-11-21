@@ -33,6 +33,7 @@ import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import "./Dashboard.css";
+import "../styles/redesign.css";
 
 const PAGE_SIZE = 20;
 const AUCTION_CATEGORIES = [
@@ -57,6 +58,10 @@ const EMPTY_FILTERS = {
   price_min: "",
   price_max: "",
 };
+
+function displayState(value) {
+  return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
+}
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -241,7 +246,7 @@ function FiltersPanel({
           <span className="filters-panel__toggle-main">
             <span className="filters-panel__toggle-icon"><Filter size={16} /></span>
             <span className="filters-panel__toggle-copy">
-              <strong>فیلترهای پیشرفته</strong>
+              <strong>جست‌وجوی پیشرفته</strong>
               <small>
                 {activeCount
                   ? toPersianDigits(activeCount) + " فیلتر فعال"
@@ -250,7 +255,7 @@ function FiltersPanel({
             </span>
           </span>
           <span className="filters-panel__toggle-action">
-            {isOpen ? "بستن فیلترها" : "نمایش فیلترها"}
+            {isOpen ? "بستن جست‌وجو" : "نمایش جست‌وجو"}
             <ChevronDown className={isOpen ? "filters-panel__chevron filters-panel__chevron--open" : "filters-panel__chevron"} size={17} />
           </span>
         </button>
@@ -259,8 +264,8 @@ function FiltersPanel({
         </button>
       </header>
 
-      {isOpen && (
-        <>
+      <div className="filters-panel__collapsible" aria-hidden={!isOpen} inert={!isOpen}>
+        <div className="filters-panel__collapsible-content">
           <div className="filters-panel__body">
             <div className={"filters-grid " + (isTender ? "filters-grid--tenders" : "filters-grid--auctions")}>
               <FilterField label="استان">
@@ -284,7 +289,7 @@ function FiltersPanel({
               <FilterField label="وضعیت آگهی">
                 <select value={filters.state} onChange={(event) => onChange("state", event.target.value)}>
                   <option value="">همه وضعیت‌ها</option>
-                  {stateOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                  {stateOptions.map((value) => <option key={value} value={value}>{displayState(value)}</option>)}
                 </select>
               </FilterField>
 
@@ -401,8 +406,8 @@ function FiltersPanel({
               <Filter size={15} /> اعمال فیلترها
             </button>
           </div>
-        </>
-      )}
+        </div>
+      </div>
     </section>
   );
 }
@@ -427,7 +432,7 @@ function DetailModal({ record, kind, loading, onClose }) {
           ["مهلت دریافت اسناد", displayDate(record.documents_deadline_at, record.documents_deadline_date)],
           ["مهلت پیشنهاد", displayDate(record.proposal_deadline_at, record.proposal_deadline_date)],
           ["تاریخ بازگشایی", displayDate(record.opening_at, record.opening_date)],
-          ["وضعیت", record.state],
+          ["وضعیت", displayState(record.state)],
         ]
       : [
           ["شناسه ردیف", record.id],
@@ -457,7 +462,7 @@ function DetailModal({ record, kind, loading, onClose }) {
           ["تاریخ باز شدن", displayDate(record.opened_at, null)],
           ["تاریخ بازگشایی", displayDate(record.opening_at, null)],
           ["افتتاح سپرده", displayDate(record.trust_opened_at, null)],
-          ["وضعیت", record.state],
+          ["وضعیت", displayState(record.state)],
         ]
     : [];
 
@@ -522,11 +527,11 @@ function DetailModal({ record, kind, loading, onClose }) {
   );
 }
 
-export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
+export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, sidebarCollapsed, onSidebarToggle }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [auctionCategory, setAuctionCategory] = useState("movable");
-  const [matchedOnly, setMatchedOnly] = useState(true);
+  const [matchedOnly, setMatchedOnly] = useState(!isTender);
   const selectedCategoryLabel = AUCTION_CATEGORIES.find((item) => item.key === auctionCategory)?.label || "منقول";
   const [result, setResult] = useState({
     items: [],
@@ -565,7 +570,8 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
       const data = await fetchPage({
         search,
         ...appliedFilters,
-        ...(!isTender ? { category: auctionCategory, matched_only: matchedOnly } : {}),
+        matched_only: matchedOnly,
+        ...(!isTender ? { category: auctionCategory } : {}),
         sortBy,
         sortDir,
         page: nextPage,
@@ -766,7 +772,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
         sortKey: "state",
         render: (item) => (
           <span className={"state-pill " + (item.state === "PUBLISHED" ? "state-pill--published" : "")}>
-            {item.state || "نامشخص"}
+            {displayState(item.state)}
           </span>
         ),
       },
@@ -876,7 +882,8 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
   const exportValues = {
     search,
     ...appliedFilters,
-    ...(!isTender ? { category: auctionCategory, matched_only: matchedOnly } : {}),
+    matched_only: matchedOnly,
+    ...(!isTender ? { category: auctionCategory } : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
   };
@@ -886,8 +893,8 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
   const exportHref = "/api/" + kind + "/export.xlsx?" + exportParams.toString();
 
   return (
-    <div className="app-shell">
-      <Sidebar page={kind} onNavigate={onNavigate} />
+    <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
+      <Sidebar page={kind} onNavigate={onNavigate} collapsed={sidebarCollapsed} onToggle={onSidebarToggle} />
 
       <main className="main-content" id="dashboard">
         <header className="topbar">
@@ -940,9 +947,8 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
             </div>
           </section>
 
-          {!isTender && (
-            <section className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
-              <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
+          <section className="auction-category-nav" aria-label="فیلتر ارتباط با کلیدواژه‌ها">
+              {!isTender && <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
                 {AUCTION_CATEGORIES.map(({ key, label }) => (
                   <button
                     key={key}
@@ -955,7 +961,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
                     {label}
                   </button>
                 ))}
-              </div>
+              </div>}
               <label className="auction-category-nav__match">
                 <input
                   type="checkbox"
@@ -964,8 +970,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
                 />
                 فقط آگهی‌های مرتبط با کلیدواژه‌ها
               </label>
-            </section>
-          )}
+          </section>
           {!isTender && auctionCategory === "clearance" && (
             <div className="auction-category-note">
               حراج: فعلاً فقط آگهی‌های سازمان جمع‌آوری و فروش اموال تملیکی (شناسه ۵۳۱۵)
@@ -978,7 +983,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
               icon={isTender ? FileText : Gavel}
               label="رکورد در نتایج"
               value={result.total}
-              hint={isTender ? "تعداد رکوردهای منطبق با فیلتر فعلی" : matchedOnly ? "فقط آگهی‌های مرتبط" : "همه آگهی‌های دسته انتخاب‌شده"}
+              hint={matchedOnly ? "فقط آگهی‌های مرتبط" : isTender ? "رکوردهای منطبق با فیلتر فعلی" : "همه آگهی‌های دسته انتخاب‌شده"}
               archiveValue={archiveStats.total}
             />
             <StatCard
@@ -1001,7 +1006,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle }) {
               icon={CheckCircle2}
               label={isTender ? "نوع فراخوان در این صفحه" : auctionCategory === "clearance" ? "مرتبط در این صفحه" : "منتشرشده در این صفحه"}
               value={fourthStat}
-              hint={isTender ? "تعداد انواع فراخوان متمایز" : auctionCategory === "clearance" ? "طبق کلیدواژه‌های کارفرما" : "تعداد آگهی‌های PUBLISHED"}
+              hint={isTender ? "تعداد انواع فراخوان متمایز" : auctionCategory === "clearance" ? "طبق کلیدواژه‌ها" : "تعداد آگهی‌های منتشرشده"}
               archiveValue={isTender ? archiveStats.type_count : auctionCategory === "clearance" ? archiveStats.matched_total : archiveStats.published_count}
               tone="amber"
             />
