@@ -21,7 +21,13 @@ from app.db.models import Auction, AppSetting, IngestionRun
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
-from app.services.auction_ingestion import AUCTION_CATEGORIES, import_auction_pages
+from app.services.auction_ingestion import (
+    AUCTION_CATEGORIES,
+    AUCTION_CATEGORIES_BY_GROUP,
+    COLLECTION_GROUPS,
+    import_auction_pages,
+    resolve_collection_group,
+)
 from app.auction_category_jobs import latest_category_files
 from app.services.date_normalization import parse_filter_bound
 from app.services.excel_export import build_excel
@@ -37,6 +43,7 @@ app.include_router(tenders_router)
 
 ORDER_FIELDS = {
     "source_party_id": Auction.source_party_id,
+    "collection_group": Auction.collection_group,
     "item_title": Auction.item_title,
     "item_reference_no": Auction.item_reference_no,
     "asset_type": Auction.asset_type,
@@ -65,16 +72,23 @@ ORDER_FIELDS = {
     "updated_at": Auction.updated_at,
 }
 
-COLLECTION_START_PAGE = 1
-COLLECTION_END_PAGE = 37
 PROGRESS_PREFIX = "PROGRESS_JSON:"
-COLLECTION_KINDS = ("auctions", "tenders", "immovable", "rental", "minor", "clearance")
 collection_lock = threading.Lock()
 
 
-def initial_collection_state(kind: str) -> dict:
+def collection_state_key(collection_group: str, category: str) -> str:
+    return f"auctions:{collection_group}:{category}"
+
+
+def initial_collection_state(
+    kind: str,
+    collection_group: str | None = None,
+    category: str | None = None,
+) -> dict:
     return {
         "kind": kind,
+        "collection_group": collection_group,
+        "category": category,
         "status": "idle",
         "phase": "idle",
         "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
@@ -95,31 +109,46 @@ def initial_collection_state(kind: str) -> dict:
     }
 
 
-collection_states = {kind: initial_collection_state(kind) for kind in COLLECTION_KINDS}
+collection_states = {"tenders": initial_collection_state("tenders")}
+for _group, _categories in AUCTION_CATEGORIES_BY_GROUP.items():
+    for _category in _categories:
+        _key = collection_state_key(_group, _category)
+        collection_states[_key] = initial_collection_state("auctions", _group, _category)
 
 
-def update_collection_state(collection_kind: str, **values) -> dict:
+def update_collection_state(state_key: str, **values) -> dict:
     with collection_lock:
-        collection_states[collection_kind].update(values)
-        return dict(collection_states[collection_kind])
+        collection_states[state_key].update(values)
+        return dict(collection_states[state_key])
 
 
-def run_collection_job(kind: str) -> None:
+def run_collection_job(
+    kind: str,
+    collection_group: str | None = None,
+    category: str | None = None,
+) -> None:
+    if kind == "tenders":
+        state_key = "tenders"
+        group = None
+        category = None
+    else:
+        category = category or "movable"
+        group = resolve_collection_group(category, collection_group)
+        state_key = collection_state_key(group, category)
+
     started_at = datetime.now(timezone.utc).isoformat()
-    initial = initial_collection_state(kind)
-    initial.update(
-        {
-            "status": "collecting",
-            "phase": "collecting",
-            "message": (
-                "در حال دریافت صفحات مزایده‌ها..."
-                if kind != "tenders"
-                else "در حال اتصال به سامانه مناقصه‌ها و شناسایی تعداد صفحات..."
-            ),
-            "started_at": started_at,
-        }
-    )
-    update_collection_state(kind, **initial)
+    initial = initial_collection_state(kind, group, category)
+    initial.update({
+        "status": "collecting",
+        "phase": "collecting",
+        "message": (
+            "در حال دریافت صفحات مزایده‌ها..."
+            if kind != "tenders"
+            else "در حال اتصال به سامانه مناقصه‌ها و شناسایی تعداد صفحات..."
+        ),
+        "started_at": started_at,
+    })
+    update_collection_state(state_key, **initial)
 
     output_lines: deque[str] = deque(maxlen=100)
     try:
@@ -136,9 +165,11 @@ def run_collection_job(kind: str) -> None:
             module = "setad_scope.collectors.fetch_tenders"
             collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.7"]
         else:
-            category = "movable" if kind == "auctions" else kind
             module = "setad_scope.collectors.fetch_auction_categories"
-            collector_args = ["--category", category, "--start-page", "0", "--delay", "0.7"]
+            collector_args = [
+                "--group", group, "--category", category,
+                "--start-page", "0", "--delay", "0.7",
+            ]
 
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", module, *collector_args],
@@ -162,7 +193,7 @@ def run_collection_job(kind: str) -> None:
                     except json.JSONDecodeError:
                         continue
                     update_collection_state(
-                        kind,
+                        state_key,
                         status="collecting",
                         phase=progress.get("phase", "collecting"),
                         message=progress.get("message", "در حال دریافت اطلاعات..."),
@@ -177,10 +208,10 @@ def run_collection_job(kind: str) -> None:
         return_code = process.wait()
         output = "\n".join(output_lines)[-5000:]
         if return_code != 0:
-            raise RuntimeError(output or f"{kind} collector exited with code {return_code}")
+            raise RuntimeError(output or f"{state_key} collector exited with code {return_code}")
 
         update_collection_state(
-            kind,
+            state_key,
             status="importing",
             phase="importing",
             message="دریافت صفحات تمام شد؛ در حال پردازش و ذخیره در PostgreSQL...",
@@ -191,9 +222,7 @@ def run_collection_job(kind: str) -> None:
         if kind == "tenders":
             files = latest_tender_run_files(TENDER_RAW_DIR)
         else:
-            category = "movable" if kind == "auctions" else kind
-            files = latest_category_files(category)
-
+            files = latest_category_files(category, collection_group=group)
         if not files:
             raise RuntimeError("Collector completed but no raw response page files were found.")
 
@@ -202,7 +231,7 @@ def run_collection_job(kind: str) -> None:
             total = max(int(progress.get("total_pages", 0)), 1)
             percent = 85 + int(15 * completed / total)
             update_collection_state(
-                kind,
+                state_key,
                 status="importing",
                 phase="importing",
                 message=f"ذخیره صفحه {completed} از {total} در PostgreSQL...",
@@ -211,7 +240,11 @@ def run_collection_job(kind: str) -> None:
                 pages_completed=completed,
                 records_fetched=int(progress.get("fetched", 0)),
                 records_stored=int(progress.get("stored", 0)),
-                records_skipped=int(progress.get("skipped_missing_id", 0) + progress.get("skipped_invalid_record", 0) + progress.get("skipped_expired", 0)),
+                records_skipped=int(
+                    progress.get("skipped_missing_id", 0)
+                    + progress.get("skipped_invalid_record", 0)
+                    + progress.get("skipped_expired", 0)
+                ),
                 progress_percent=min(percent, 99),
             )
 
@@ -219,14 +252,17 @@ def run_collection_job(kind: str) -> None:
             if kind == "tenders":
                 totals = import_tender_pages(session, files, progress_callback=report_import_progress)
             else:
-                category = "movable" if kind == "auctions" else kind
-                totals = import_auction_pages(session, files, category, progress_callback=report_import_progress)
+                totals = import_auction_pages(
+                    session, files, category,
+                    progress_callback=report_import_progress,
+                    collection_group=group,
+                )
 
         records_fetched = int(totals.get("fetched", 0))
         records_stored = int(totals.get("stored", 0))
         records_skipped = max(records_fetched - records_stored, 0)
         update_collection_state(
-            kind,
+            state_key,
             status="completed",
             phase="completed",
             message="جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد.",
@@ -240,7 +276,7 @@ def run_collection_job(kind: str) -> None:
         )
     except Exception as exc:
         update_collection_state(
-            kind,
+            state_key,
             status="failed",
             phase="failed",
             message="اجرای جمع‌آوری با خطا مواجه شد.",
@@ -260,6 +296,7 @@ def auction_to_dict(a: Auction) -> dict:
     return {
         "id": a.id,
         "source_party_id": a.source_party_id,
+        "collection_group": a.collection_group,
         "category": a.category,
         "has_keyword_match": a.has_keyword_match,
         "item_title": a.item_title,
@@ -325,8 +362,11 @@ def filtered_query(
     price_max: Decimal | None = None,
     category: str = "movable",
     matched_only: bool = True,
+    collection_group: str = "all",
 ):
     query = select(Auction).where(Auction.category == category)
+    if collection_group != "all":
+        query = query.where(Auction.collection_group == collection_group)
     if matched_only:
         query = query.where(Auction.has_keyword_match.is_(True))
     now = datetime.now(timezone.utc)
@@ -383,20 +423,34 @@ def filtered_query(
     return query
 
 
-def auction_archive_stats(db: Session, category: str) -> dict[str, int]:
-    total = db.scalar(select(func.count(Auction.id)).where(Auction.category == category)) or 0
-    matched_total = db.scalar(select(func.count(Auction.id)).where(Auction.category == category, Auction.has_keyword_match.is_(True))) or 0
+def _auction_group_scope(category: str, collection_group: str):
+    conditions = [Auction.category == category]
+    if collection_group != "all":
+        conditions.append(Auction.collection_group == collection_group)
+    return conditions
+
+
+def auction_archive_stats(
+    db: Session,
+    category: str,
+    collection_group: str = "all",
+) -> dict[str, int]:
+    scope = _auction_group_scope(category, collection_group)
+    total = db.scalar(select(func.count(Auction.id)).where(*scope)) or 0
+    matched_total = db.scalar(
+        select(func.count(Auction.id)).where(*scope, Auction.has_keyword_match.is_(True))
+    ) or 0
     provinces = db.scalar(
-        select(func.count(func.distinct(Auction.province))).where(Auction.category == category, Auction.province.is_not(None))
+        select(func.count(func.distinct(Auction.province))).where(*scope, Auction.province.is_not(None))
     ) or 0
     cities = db.scalar(
-        select(func.count(func.distinct(Auction.city))).where(Auction.category == category, Auction.city.is_not(None))
+        select(func.count(func.distinct(Auction.city))).where(*scope, Auction.city.is_not(None))
     ) or 0
     organizations = db.scalar(
-        select(func.count(func.distinct(Auction.organization))).where(Auction.category == category, Auction.organization.is_not(None))
+        select(func.count(func.distinct(Auction.organization))).where(*scope, Auction.organization.is_not(None))
     ) or 0
     published = db.scalar(
-        select(func.count(Auction.id)).where(Auction.category == category, Auction.state == "PUBLISHED")
+        select(func.count(Auction.id)).where(*scope, Auction.state == "PUBLISHED")
     ) or 0
     return {
         "total": total,
@@ -408,22 +462,27 @@ def auction_archive_stats(db: Session, category: str) -> dict[str, int]:
     }
 
 
-def auction_filter_options(db: Session, category: str) -> dict[str, list]:
+def auction_filter_options(
+    db: Session,
+    category: str,
+    collection_group: str = "all",
+) -> dict[str, list]:
+    scope = _auction_group_scope(category, collection_group)
     provinces = db.scalars(
         select(Auction.province)
-        .where(Auction.category == category, Auction.province.is_not(None))
+        .where(*scope, Auction.province.is_not(None))
         .distinct()
         .order_by(Auction.province)
     ).all()
     city_rows = db.execute(
         select(Auction.city, Auction.province)
-        .where(Auction.category == category, Auction.city.is_not(None), Auction.province.is_not(None))
+        .where(*scope, Auction.city.is_not(None), Auction.province.is_not(None))
         .distinct()
         .order_by(Auction.province, Auction.city)
     ).all()
     states = db.scalars(
         select(Auction.state)
-        .where(Auction.category == category, Auction.state.is_not(None))
+        .where(*scope, Auction.state.is_not(None))
         .distinct()
         .order_by(Auction.state)
     ).all()
@@ -472,6 +531,7 @@ def latest_successful_collection_at(
     db: Session,
     run_kind: str,
     category: str | None,
+    collection_group: str | None = None,
 ) -> datetime | None:
     query = select(IngestionRun.finished_at).where(
         IngestionRun.kind == run_kind,
@@ -482,6 +542,10 @@ def latest_successful_collection_at(
         query = query.where(IngestionRun.category.is_(None))
     else:
         query = query.where(IngestionRun.category == category)
+    if collection_group is None:
+        query = query.where(IngestionRun.collection_group.is_(None))
+    else:
+        query = query.where(IngestionRun.collection_group == collection_group)
     return db.scalar(query.order_by(IngestionRun.finished_at.desc()).limit(1))
 
 
@@ -490,10 +554,11 @@ def collection_status_response(
     run_kind: str,
     category: str | None,
     db: Session,
+    collection_group: str | None = None,
 ) -> dict:
     with collection_lock:
         state = dict(collection_states[state_key])
-    last_updated = latest_successful_collection_at(db, run_kind, category)
+    last_updated = latest_successful_collection_at(db, run_kind, category, collection_group)
     state["last_updated_at"] = last_updated.isoformat() if last_updated else None
     return state
 
@@ -503,8 +568,13 @@ def get_collection_status(
     kind: Literal["auctions", "tenders"],
     db: Session = Depends(get_db),
 ):
-    category = "movable" if kind == "auctions" else None
-    return collection_status_response(kind, kind, category, db)
+    if kind == "tenders":
+        return collection_status_response("tenders", "tenders", None, db)
+    group = "executive_agencies"
+    category = "movable"
+    return collection_status_response(
+        collection_state_key(group, category), "auctions", category, db, group,
+    )
 
 
 @app.post("/api/collection/{kind}/run", status_code=202)
@@ -513,40 +583,44 @@ def start_collection(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    with collection_lock:
-        state = collection_states[kind]
-        if state["status"] in {"collecting", "importing"}:
-            raise HTTPException(
-                status_code=409,
-                detail=f"A {kind} collection job is already running.",
-            )
-        collection_states[kind] = initial_collection_state(kind)
-        collection_states[kind].update(
-            {
-                "status": "collecting",
-                "phase": "collecting",
-                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }
+    if kind == "auctions":
+        return start_auction_category_collection(
+            "movable", background_tasks, db, collection_group="executive_agencies",
         )
-        response_state = dict(collection_states[kind])
 
-    category = "movable" if kind == "auctions" else None
-    last_updated = latest_successful_collection_at(db, kind, category)
+    state_key = "tenders"
+    with collection_lock:
+        state = collection_states[state_key]
+        if state["status"] in {"collecting", "importing"}:
+            raise HTTPException(status_code=409, detail="A tenders collection job is already running.")
+        collection_states[state_key] = initial_collection_state("tenders")
+        collection_states[state_key].update({
+            "status": "collecting",
+            "phase": "collecting",
+            "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        })
+        response_state = dict(collection_states[state_key])
+    last_updated = latest_successful_collection_at(db, "tenders", None, None)
     response_state["last_updated_at"] = last_updated.isoformat() if last_updated else None
-    background_tasks.add_task(run_collection_job, kind)
+    background_tasks.add_task(run_collection_job, "tenders")
     return response_state
 
 
-# Backward-compatible aliases: the old untyped endpoints continue to target auctions.
-# Category-specific collection endpoints.
+# Existing route shapes remain available. Pass collection_group to select a
+# source group; omitted group values retain the historical category mapping.
 @app.get("/api/collection/auctions/{category}/status")
 def get_auction_category_status(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
     db: Session = Depends(get_db),
 ):
-    state_key = "auctions" if category == "movable" else category
-    return collection_status_response(state_key, "auctions", category, db)
+    try:
+        group = resolve_collection_group(category, collection_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state_key = collection_state_key(group, category)
+    return collection_status_response(state_key, "auctions", category, db, group)
 
 
 @app.post("/api/collection/auctions/{category}/run", status_code=202)
@@ -554,35 +628,78 @@ def start_auction_category_collection(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
 ):
-    state_key = "auctions" if category == "movable" else category
+    try:
+        group = resolve_collection_group(category, collection_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    state_key = collection_state_key(group, category)
     with collection_lock:
         state = collection_states[state_key]
         if state["status"] in {"collecting", "importing"}:
             raise HTTPException(
                 status_code=409,
-                detail=f"A {category} collection job is already running.",
+                detail=f"A {group}/{category} collection job is already running.",
             )
-        collection_states[state_key] = initial_collection_state(state_key)
-        collection_states[state_key].update(
-            {
-                "status": "collecting",
-                "phase": "collecting",
-                "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-            }
-        )
+        collection_states[state_key] = initial_collection_state("auctions", group, category)
+        collection_states[state_key].update({
+            "status": "collecting",
+            "phase": "collecting",
+            "message": "در حال آماده‌سازی جمع‌آوری اطلاعات...",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+        })
         response_state = dict(collection_states[state_key])
 
-    last_updated = latest_successful_collection_at(db, "auctions", category)
+    last_updated = latest_successful_collection_at(db, "auctions", category, group)
     response_state["last_updated_at"] = last_updated.isoformat() if last_updated else None
-    background_tasks.add_task(run_collection_job, state_key)
+    background_tasks.add_task(run_collection_job, "auctions", group, category)
     return response_state
+
+
+@app.get("/api/collection/auctions/history")
+def get_auction_collection_history(
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
+    limit: int = Query(50, ge=1, le=200),
+    db: Session = Depends(get_db),
+):
+    query = select(IngestionRun).where(IngestionRun.kind == "auctions")
+    if collection_group != "all":
+        query = query.where(IngestionRun.collection_group == collection_group)
+    if category is not None:
+        query = query.where(IngestionRun.category == category)
+    runs = db.scalars(
+        query.order_by(IngestionRun.started_at.desc(), IngestionRun.id.desc()).limit(limit)
+    ).all()
+    return {
+        "items": [
+            {
+                "id": run.id,
+                "collection_group": run.collection_group,
+                "category": run.category,
+                "status": run.status,
+                "started_at": run.started_at,
+                "finished_at": run.finished_at,
+                "fetched": run.fetched,
+                "matched": run.matched,
+                "stored": run.stored,
+                "error": run.error,
+            }
+            for run in runs
+        ],
+        "limit": limit,
+        "total": len(runs),
+    }
 
 
 @app.get("/api/collection/status")
 def get_auction_collection_status(db: Session = Depends(get_db)):
-    return collection_status_response("auctions", "auctions", "movable", db)
+    group = "executive_agencies"
+    category = "movable"
+    return collection_status_response(
+        collection_state_key(group, category), "auctions", category, db, group,
+    )
 
 
 @app.post("/api/collection/run", status_code=202)
@@ -590,13 +707,16 @@ def start_auction_collection(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    return start_auction_category_collection("movable", background_tasks, db)
+    return start_auction_category_collection(
+        "movable", background_tasks, db, collection_group="executive_agencies",
+    )
 
 
 @app.get("/api/auctions")
 def get_auctions(
     search: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     status: Literal["active", "archive", "all"] = "all",
     province: str | None = None,
@@ -622,7 +742,7 @@ def get_auctions(
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only,
+        price_min, price_max, category, matched_only, collection_group,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -638,8 +758,8 @@ def get_auctions(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
-        "archive_stats": auction_archive_stats(db, category),
-        "filter_options": auction_filter_options(db, category),
+        "archive_stats": auction_archive_stats(db, category, collection_group),
+        "filter_options": auction_filter_options(db, category, collection_group),
     }
 
 
@@ -648,6 +768,7 @@ def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     province: str | None = None,
     city: str | None = None,
@@ -667,20 +788,20 @@ def export_auctions(
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only,
+        price_min, price_max, category, matched_only, collection_group,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
     query = query.order_by(ordering, Auction.id.asc())
     headers = [
-        "شناسه", "دسته", "عنوان", "عنوان مورد", "نوع قیمت", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
+        "شناسه", "مجموعه", "دسته", "عنوان", "عنوان مورد", "نوع قیمت", "شرح کلی", "کلمات منطبق", "سازمان", "استان", "شهر",
         "تاریخ اعلام در سایت", "شروع پیشنهاد", "مهلت پیشنهاد", "مهلت دریافت اسناد",
         "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
         "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
     ]
     rows = (
         [
-            excel_safe(a.source_party_id), a.category,
+            excel_safe(a.source_party_id), a.collection_group, a.category,
             excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
             excel_safe(a.description), excel_safe(", ".join(a.matched_keywords or [])),
             excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
@@ -695,8 +816,8 @@ def export_auctions(
     )
     data = build_excel(
         "مزایده‌ها", "SetadScopeAuctions", headers, rows,
-        widths=[23, 17, 52, 44, 22, 65, 32, 38, 20, 20, 25, 25, 25, 25, 27, 27, 25, 25, 22, 52],
-        numeric_columns=(15, 16),
+        widths=[23, 22, 17, 52, 44, 22, 65, 32, 38, 20, 20, 25, 25, 25, 25, 27, 27, 25, 25, 22, 52],
+        numeric_columns=(16, 17),
     )
     return StreamingResponse(
         data,
