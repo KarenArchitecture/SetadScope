@@ -5,8 +5,9 @@ import ThemeToggle from "../components/ThemeToggle";
 import { getKeywords, updateKeywords } from "../services/api";
 import "./Dashboard.css";
 import "./Settings.css";
+import "../styles/redesign.css";
 
-export default function Settings({ onNavigate, theme, onThemeToggle }) {
+export default function Settings({ onNavigate, theme, onThemeToggle, sidebarCollapsed, onSidebarToggle }) {
   const [keywords, setKeywords] = useState([]);
   const [original, setOriginal] = useState([]);
   const [newKeyword, setNewKeyword] = useState("");
@@ -63,8 +64,8 @@ export default function Settings({ onNavigate, theme, onThemeToggle }) {
   }
 
   return (
-    <div className="app-shell">
-      <Sidebar page="settings" onNavigate={onNavigate} />
+    <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
+      <Sidebar page="settings" onNavigate={onNavigate} collapsed={sidebarCollapsed} onToggle={onSidebarToggle} />
       <main className="main-content">
         <header className="topbar">
           <div className="topbar__breadcrumb">SetadScope <span>‹</span> تنظیمات سایت</div>
