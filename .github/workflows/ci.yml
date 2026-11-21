@@ -6,6 +6,7 @@ on:
       - master
       - feature/postgres-keyword-pipeline
       - UI-UX-improvement
+      - feature/multi-source-auction-architecture
   pull_request:
     branches:
       - master
@@ -117,6 +118,21 @@ jobs:
       - name: Upgrade to pre-tender-matching schema
         working-directory: backend
         run: alembic upgrade 0006
+      - name: Seed legacy Amval clearance before group migration
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as connection:
+              connection.execute(
+                  text("""INSERT INTO auctions
+                  (source, source_party_id, category, matched_keywords, raw_payload)
+                  VALUES ('setad_clearance_5315', 'pre-migration-clearance', 'clearance',
+                  CAST(:keywords AS json), CAST(:payload AS jsonb))"""),
+                  {"keywords": "[]", "payload": '{"marker": "pre-migration-clearance"}'},
+              )
+          PY
       - name: Seed archived tender before relevance migration
         run: |
           python - <<'PY'
