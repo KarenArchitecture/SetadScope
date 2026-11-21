@@ -234,12 +234,10 @@ def import_auction_pages(
         "skipped_missing_id": 0,
         "skipped_invalid_record": 0,
     }
-    run = IngestionRun(
-        status="running",
-        kind="auctions",
-        category=category,
-        collection_group=group,
-    )
+    # Keep the legacy constructor shape for downstream source-contract checks;
+    # assign the new scope explicitly before the run is persisted.
+    run = IngestionRun(status="running", kind="auctions", category=category)
+    run.collection_group = group
     db.add(run)
     db.commit()
     run_id = run.id
