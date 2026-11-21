@@ -17,6 +17,7 @@ from setad_scope.collectors.auction_sources.registry import (
     ALL_CATEGORIES,
     CATEGORIES_BY_GROUP,
     COLLECTION_GROUPS,
+    SOURCE_REGISTRY,
     resolve_collection_group,
     source_for,
 )
@@ -25,9 +26,7 @@ AUCTION_CATEGORIES = ALL_CATEGORIES
 AUCTION_CATEGORIES_BY_GROUP = CATEGORIES_BY_GROUP
 SOURCES_BY_GROUP = {
     group: {category: source.source for category, source in sources.items()}
-    for group, sources in __import__(
-        "setad_scope.collectors.auction_sources.registry", fromlist=["SOURCE_REGISTRY"]
-    ).SOURCE_REGISTRY.items()
+    for group, sources in SOURCE_REGISTRY.items()
 }
 # Backward-compatible category-to-source mapping for existing imports and tests.
 SOURCES = {
