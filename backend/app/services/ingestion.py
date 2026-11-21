@@ -105,7 +105,7 @@ def import_pages(
         "skipped_expired": 0,
         "skipped_unknown_deadline": 0,
     }
-    run = IngestionRun(status="running")
+    run = IngestionRun(status="running", kind="auctions", category="movable")
     db.add(run)
     db.commit()
     run_id = run.id
