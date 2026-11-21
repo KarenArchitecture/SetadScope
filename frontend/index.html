@@ -4,6 +4,15 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#171717" />
+    <script>
+      // Set the stored theme before the first UI paint to avoid a light flash.
+      try {
+        var savedTheme = window.localStorage.getItem("setadscope-theme");
+        document.documentElement.dataset.theme = savedTheme === "light" ? "light" : "dark";
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
     <meta name="description" content="SetadScope — سامانه پایش و تحلیل مزایده‌ها و مناقصه‌ها" />
     <title>SetadScope | پایش و تحلیل معاملات</title>
   </head>
