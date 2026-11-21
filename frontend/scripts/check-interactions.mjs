@@ -111,3 +111,22 @@ assert.match(migration, /revision = "0008"/);
 assert.match(migration, /ix_ingestion_runs_scope_finished/);
 
 console.log("Collection timestamp checks passed: persistent history and Tehran-local display.");
+
+
+// Stable collection actions and accessible toast lifecycle notifications.
+const toastViewport = read("src/components/ToastViewport.jsx");
+const toastStyles = read("src/components/ToastViewport.css");
+const toastUtils = read("src/utils/toast.js");
+assert.match(app, /<ToastViewport \/>/);
+assert.match(dashboard, /className="collection-action-card"/);
+assert.match(dashboard, /collection-action-card__last-updated/);
+assert.match(dashboard, /notifyToast\(\s*"loading"/);
+assert.match(dashboard, /notifyToast\(\s*"success"/);
+assert.match(dashboard, /notifyToast\(\s*"error"/);
+assert.match(toastViewport, /setadscope:toast/);
+assert.match(toastViewport, /aria-live="polite"/);
+assert.match(toastViewport, /TOAST_ICONS/);
+assert.match(toastStyles, /app-toast-enter/);
+assert.match(toastUtils, /export function notifyToast/);
+
+console.log("Toast checks passed: request, success, error and accessible viewport.");
