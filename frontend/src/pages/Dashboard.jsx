@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
   ArrowDownToLine,
   ChevronDown,
   Building2,
@@ -8,7 +7,6 @@ import {
   CheckCircle2,
   CircleDollarSign,
   Database,
-  FileSearch,
   FileText,
   Filter,
   Gavel,
@@ -22,16 +20,12 @@ import {
 import {
   getAuctionById,
   getAuctions,
-  getApiHealth,
   getCollectionStatus,
   getTenderById,
   getTenders,
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
-import Sidebar from "../components/Sidebar";
-import ThemeToggle from "../components/ThemeToggle";
-import GlobalSearchBar from "../components/GlobalSearchBar";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
@@ -581,7 +575,7 @@ export function DetailModal({ record, kind, loading, onClose }) {
   );
 }
 
-export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, sidebarCollapsed, onSidebarToggle }) {
+export default function Dashboard({ kind }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [auctionCategory, setAuctionCategory] = useState("movable");
@@ -608,7 +602,6 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [apiOnline, setApiOnline] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
@@ -652,7 +645,6 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
 
   useEffect(() => {
     let active = true;
-    getApiHealth().then(() => { if (active) setApiOnline(true); }).catch(() => { if (active) setApiOnline(false); });
     getCollectionStatus(kind, auctionCategory).then((status) => {
       if (active) setCollectionState(status);
     }).catch(() => {});
@@ -985,24 +977,8 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
   const exportHref = "/api/" + kind + "/export.xlsx?" + exportParams.toString();
 
   return (
-    <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
-      <Sidebar page={kind} onNavigate={onNavigate} collapsed={sidebarCollapsed} onToggle={onSidebarToggle} />
-
-      <main className="main-content" id="dashboard">
-        <header className="topbar">
-          <div className="topbar__breadcrumb">
-            SetadScope <span>‹</span> {isTender ? "مناقصه‌ها" : "مزایده‌ها"}
-          </div>
-          <GlobalSearchBar onNavigate={onNavigate} />
-          <div className="topbar__actions">
-            <div className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}>
-              <span /> {apiOnline ? "اتصال به Backend برقرار است" : "در انتظار اتصال به Backend"}
-            </div>
-            <ThemeToggle theme={theme} onToggle={onThemeToggle} />
-          </div>
-        </header>
-
-        <div className="dashboard-content">
+    <>
+      <div className="dashboard-content" id="dashboard">
           <section className="page-heading">
             <div>
               <span className="eyebrow">مرکز پایش معاملات</span>
@@ -1155,8 +1131,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
             <span>SetadScope · پایش داده‌های عمومی معاملات</span>
             <span><CircleDollarSign size={14} /> واحد پول مبالغ تا زمان اعتبارسنجی نمایش داده نمی‌شود</span>
           </footer>
-        </div>
-      </main>
+      </div>
 
       {(selectedRecord || detailLoading) && (
         <DetailModal
@@ -1166,6 +1141,6 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />
       )}
-    </div>
+    </>
   );
 }
