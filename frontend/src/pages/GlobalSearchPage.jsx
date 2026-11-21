@@ -86,6 +86,7 @@ export default function GlobalSearchPage({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
+  const [detailKind, setDetailKind] = useState("auctions");
   const [detailLoading, setDetailLoading] = useState(false);
   const lastRequestId = useRef(0);
 
@@ -221,6 +222,7 @@ export default function GlobalSearchPage({
 
   async function openDetails(id, item) {
     setSelectedRecord(null);
+    setDetailKind(item.record_type === "tender" ? "tenders" : "auctions");
     setDetailLoading(true);
     try {
       const record = item.record_type === "tender"
@@ -384,7 +386,7 @@ export default function GlobalSearchPage({
       {(selectedRecord || detailLoading) && (
         <DetailModal
           record={selectedRecord}
-          kind={selectedRecord?.source_tender_id ? "tenders" : "auctions"}
+          kind={detailKind}
           loading={detailLoading}
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />
