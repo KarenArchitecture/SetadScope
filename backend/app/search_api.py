@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Auction, Tender
 from app.db.session import get_db
+from setad_scope.collectors.auction_sources.registry import resolve_collection_group
 
 
 router = APIRouter(tags=["global-search"])
@@ -38,6 +39,7 @@ SORT_COLUMNS = {
     "base_total_price": "base_total_price",
     "record_type": "record_type",
     "source": "source",
+    "collection_group": "collection_group",
 }
 
 
@@ -172,6 +174,11 @@ def global_search(
 ):
     if sort_by not in SORT_COLUMNS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    if collection_group != "all" and category is not None:
+        try:
+            resolve_collection_group(category, collection_group)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     rows = _searchable_rows(search, source, province, city, category, status, matched_only, collection_group)
     base = select(rows)
