@@ -646,3 +646,14 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
     width: min(100%, 238px);
   }
 }
+
+
+/* The route shell owns the viewport; pages only render their own content. */
+.app-shell { min-height: 100vh; }
+.main-content {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-width: 0;
+}
+.main-content > .topbar { flex: 0 0 auto; }
