@@ -49,11 +49,13 @@ def _searchable_rows(
     category: str | None,
     status: str,
     matched_only: bool,
+    collection_group: str,
 ):
     auction_query = select(
         literal("auction").label("record_type"),
         Auction.id.label("record_id"),
         Auction.source.label("source"),
+        Auction.collection_group.label("collection_group"),
         Auction.category.label("category"),
         func.coalesce(Auction.title, Auction.item_title).label("title"),
         func.coalesce(
@@ -75,6 +77,7 @@ def _searchable_rows(
         literal("tender").label("record_type"),
         Tender.id.label("record_id"),
         Tender.source.label("source"),
+        literal(None, type_=String(32)).label("collection_group"),
         literal(None, type_=String(24)).label("category"),
         Tender.title.label("title"),
         func.coalesce(Tender.tender_number, Tender.source_tender_id).label("record_number"),
@@ -92,6 +95,9 @@ def _searchable_rows(
     if source:
         auction_query = auction_query.where(Auction.source == source)
         tender_query = tender_query.where(Tender.source == source)
+    if collection_group != "all":
+        auction_query = auction_query.where(Auction.collection_group == collection_group)
+        tender_query = tender_query.where(False)
     if province:
         auction_query = auction_query.where(Auction.province == province)
         tender_query = tender_query.where(Tender.province == province)
@@ -157,6 +163,7 @@ def global_search(
     city: str | None = None,
     status: Literal["all", "active", "archive"] = "all",
     matched_only: bool = False,
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
@@ -166,11 +173,11 @@ def global_search(
     if sort_by not in SORT_COLUMNS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
 
-    rows = _searchable_rows(search, source, province, city, category, status, matched_only)
+    rows = _searchable_rows(search, source, province, city, category, status, matched_only, collection_group)
     base = select(rows)
 
     # Tab counts stay meaningful when an auction-only category filter is active.
-    summary_rows = _searchable_rows(search, source, province, city, None, status, matched_only)
+    summary_rows = _searchable_rows(search, source, province, city, None, status, matched_only, collection_group)
     auction_count = db.scalar(
         select(func.count()).select_from(summary_rows).where(summary_rows.c.record_type == "auction")
     ) or 0
@@ -211,7 +218,18 @@ def global_search(
         item["id"] = item["record_id"]
         item["row_key"] = f'{item["record_type"]}:{item["record_id"]}'
         item["record_type_label"] = "مزایده" if item["record_type"] == "auction" else "مناقصه"
-        item["source_label"] = SOURCE_LABELS.get(item["source"], item["source"])
+        item["collection_group_label"] = {
+            "executive_agencies": "دستگاه‌های اجرایی",
+            "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
+        }.get(item.get("collection_group"), "—")
+        if item.get("collection_group") == "amval_tamliki":
+            item["source_label"] = (
+                "سامانه حراج اموال تملیکی"
+                if item["source"] == "setad_clearance_5315"
+                else "سامانه مزایده اموال تملیکی"
+            )
+        else:
+            item["source_label"] = SOURCE_LABELS.get(item["source"], item["source"])
         item["category_label"] = AUCTION_CATEGORIES.get(item["category"], "—")
         items.append(item)
 
@@ -235,6 +253,10 @@ def global_search(
             "categories": [
                 {"value": key, "label": value}
                 for key, value in AUCTION_CATEGORIES.items()
+            ],
+            "collection_groups": [
+                {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
+                {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
             ],
         },
     }
