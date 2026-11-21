@@ -27,14 +27,6 @@ def latest_category_files(
     root = raw_dir or category_raw_dir(group, category)
     manifests = sorted(root.glob(f"{category}_run_*.json"))
 
-    # Read the pre-refactor clearance snapshot once if no group-scoped manifest
-    # exists yet. New collections always write to the Amval Tamliki subfolder.
-    if not manifests and raw_dir is None and group == "amval_tamliki" and category == "clearance":
-        legacy_root = RAW_DIR / category
-        manifests = sorted(legacy_root.glob(f"{category}_run_*.json"))
-        if manifests:
-            root = legacy_root
-
     if not manifests:
         return []
     manifest = json.loads(manifests[-1].read_text(encoding="utf-8"))
