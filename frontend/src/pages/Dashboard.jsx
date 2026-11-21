@@ -986,24 +986,28 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
               </p>
             </div>
             <div className="page-heading__actions">
-              <div className="collection-action">
+              <section className="collection-action-card" aria-label="عملیات داده">
                 <button
-                  className="button button--primary"
+                  className="button button--primary collection-action-card__collect"
                   onClick={handleCollection}
                   disabled={collectionRunning}
+                  aria-label={"جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
                 >
                   {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                  {collectionRunning
+                  <span>{collectionRunning
                     ? "در حال اجرا..."
-                    : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
+                    : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}</span>
                 </button>
-                <span className="collection-action__last-updated">
+                <span
+                  className="collection-action-card__last-updated"
+                  title={formatLastCollectionUpdate(collectionState.last_updated_at)}
+                >
                   {formatLastCollectionUpdate(collectionState.last_updated_at)}
                 </span>
-              </div>
-              <a className="button button--secondary" href={exportHref}>
-                <ArrowDownToLine size={16} /> خروجی Excel
-              </a>
+                <a className="button button--secondary collection-action-card__export" href={exportHref}>
+                  <ArrowDownToLine size={16} /> خروجی Excel
+                </a>
+              </section>
             </div>
           </section>
 
