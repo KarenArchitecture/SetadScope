@@ -96,12 +96,19 @@ function formatLastCollectionUpdate(value) {
     hourCycle: "h23",
     timeZone,
   }).format(updatedAt);
-  const dayKey = (date) => new Intl.DateTimeFormat("en-CA", {
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    timeZone,
-  }).format(date);
+  const dayKey = (date) => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      timeZone,
+    }).formatToParts(date);
+    const values = Object.fromEntries(
+      parts.filter((part) => ["year", "month", "day"].includes(part.type))
+        .map((part) => [part.type, part.value]),
+    );
+    return values.year + "-" + values.month + "-" + values.day;
+  };
 
   if (dayKey(updatedAt) === dayKey(new Date())) {
     return "آخرین بروزرسانی: " + time;
