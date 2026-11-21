@@ -232,3 +232,17 @@ def test_tender_relevance_filter_and_export_share_same_dataset(tmp_path):
         finally:
             db.execute(delete(Tender).where(Tender.source_tender_id.in_(["799901", "799902"])))
             db.commit()
+
+
+
+def test_legacy_tender_relevance_is_backfilled_during_0007_migration():
+    from app.db.models import Tender
+
+    with SessionLocal() as db:
+        tender = db.scalar(
+            select(Tender).where(Tender.source_tender_id == "pre-0007-tender")
+        )
+        assert tender is not None, "Legacy tender fixture was lost during migration"
+        assert tender.has_keyword_match is True
+        assert "چوب" in tender.matched_keywords
+        assert tender.raw_payload == {"marker": "pre-tender-keyword-migration"}
