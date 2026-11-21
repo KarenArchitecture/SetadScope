@@ -82,3 +82,32 @@ assert.match(listing, /onDetails\(item\.id, item\)/);
 assert.match(globalSearchPage, /hideSearch/);
 
 console.log("Global search checks passed: all transaction types, navigation and details.");
+
+
+// Collection history is persisted and the latest successful run is scoped
+// to the selected auction category or the tender dataset.
+const dashboardCss = read("src/pages/Dashboard.css");
+const mainApi = read("../backend/app/main.py");
+const models = read("../backend/app/db/models.py");
+const auctionIngestion = read("../backend/app/services/auction_ingestion.py");
+const tenderIngestion = read("../backend/app/services/tender_ingestion.py");
+const migration = read("../backend/alembic/versions/0008_ingestion_run_scope.py");
+assert.match(dashboard, /function formatLastCollectionUpdate\(value\)/);
+assert.match(dashboard, /timeZone = "Asia\/Tehran"/);
+assert.match(dashboard, /dayKey\(updatedAt\) === dayKey\(new Date\(\)\)/);
+assert.match(dashboard, /collectionState\.last_updated_at/);
+assert.match(dashboard, /className="collection-action__last-updated"/);
+assert.match(dashboardCss, /\.collection-action__last-updated/);
+assert.match(mainApi, /def latest_successful_collection_at\(/);
+assert.match(mainApi, /IngestionRun\.status == "success"/);
+assert.match(mainApi, /state\["last_updated_at"\]/);
+assert.match(models, /class IngestionRun\(Base\)/);
+assert.match(models, /kind: Mapped\[str \| None\]/);
+assert.match(models, /category: Mapped\[str \| None\]/);
+assert.match(auctionIngestion, /IngestionRun\(status="running", kind="auctions", category=category\)/);
+assert.match(tenderIngestion, /IngestionRun\(status="running", kind="tenders", category=None\)/);
+assert.match(tenderIngestion, /run\.finished_at = datetime\.now\(timezone\.utc\)/);
+assert.match(migration, /revision = "0008"/);
+assert.match(migration, /ix_ingestion_runs_scope_finished/);
+
+console.log("Collection timestamp checks passed: persistent history and Tehran-local display.");
