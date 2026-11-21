@@ -29,6 +29,7 @@ export default function ListingTable({
   sortDir,
   onSort,
   advancedSearch,
+  hideSearch = false,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, total);
@@ -43,28 +44,31 @@ export default function ListingTable({
         <span className="raw-tag">{tag}</span>
       </div>
 
-      <form className="search-bar" onSubmit={onSearch}>
-        <Search size={18} />
-        <input
-          value={searchInput}
-          onChange={(event) => onSearchInput(event.target.value)}
-          placeholder={searchPlaceholder}
-          aria-label="جست‌وجو در آگهی‌ها"
-        />
-        {searchInput && (
-          <button
-            type="button"
-            className="search-clear"
-            onClick={() => onSearchInput("")}
-            aria-label="پاک کردن"
-          >
-            <X size={16} />
+      {!hideSearch && (
+        <form className="search-bar" onSubmit={onSearch}>
+          <Search size={18} />
+          <input
+            value={searchInput}
+            onChange={(event) => onSearchInput(event.target.value)}
+            placeholder={searchPlaceholder}
+            aria-label="جست‌وجو در آگهی‌ها"
+          />
+          {searchInput && (
+            <button
+              type="button"
+              className="search-clear"
+              onClick={() => onSearchInput("")}
+              aria-label="پاک کردن"
+            >
+              <X size={16} />
+            </button>
+          )}
+          <button className="button button--primary" type="submit" disabled={loading}>
+            جست‌وجو
           </button>
+        </form>
+  
         )}
-        <button className="button button--primary" type="submit" disabled={loading}>
-          جست‌وجو
-        </button>
-      </form>
 
       {advancedSearch}
 
@@ -118,7 +122,7 @@ export default function ListingTable({
                 </td>
               </tr>
             ) : items.map((item) => (
-              <tr key={item.id}>
+              <tr key={item.row_key || item.id}>
                 {columns.map((column) => (
                   <td key={column.key} className={column.className || ""}>
                     {column.render
@@ -127,7 +131,7 @@ export default function ListingTable({
                   </td>
                 ))}
                 <td>
-                  <button className="row-action" onClick={() => onDetails(item.id)}>
+                  <button className="row-action" onClick={() => onDetails(item.id, item)}>
                     جزئیات <ArrowLeft size={14} />
                   </button>
                 </td>
