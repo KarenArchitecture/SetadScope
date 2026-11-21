@@ -10,17 +10,22 @@ function resolvePage() {
 function initialTheme() {
   const saved = window.localStorage.getItem("setadscope-theme");
   if (saved === "light" || saved === "dark") return saved;
-  return window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  return "dark";
 }
 
 export default function App() {
   const [page, setPage] = useState(resolvePage);
   const [theme, setTheme] = useState(initialTheme);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("setadscope-sidebar-collapsed") === "true");
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     window.localStorage.setItem("setadscope-theme", theme);
   }, [theme]);
+
+  useEffect(() => {
+    window.localStorage.setItem("setadscope-sidebar-collapsed", String(sidebarCollapsed));
+  }, [sidebarCollapsed]);
 
   useEffect(() => {
     if (window.location.pathname === "/") {
@@ -37,7 +42,8 @@ export default function App() {
   }
 
   const onThemeToggle = () => setTheme((current) => current === "dark" ? "light" : "dark");
+  const onSidebarToggle = () => setSidebarCollapsed((current) => !current);
   return page === "settings"
-    ? <Settings onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} />
-    : <Dashboard key={page} kind={page} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} />;
+    ? <Settings onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />
+    : <Dashboard key={page} kind={page} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />;
 }
