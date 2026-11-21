@@ -14,7 +14,7 @@ from typing import Any
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
-from app.db.models import Tender
+from app.db.models import IngestionRun, Tender
 from app.services.date_normalization import parse_setad_datetime
 from app.services.keyword_matching import matched_keywords
 from app.services.keyword_settings import configured_keywords
@@ -81,54 +81,80 @@ def project_tender_record(record: dict[str, Any], keywords: tuple[str, ...] | No
 
 
 def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) -> dict[str, int]:
-    """Import every row in the supplied response pages, updating known tender IDs."""
+    """Import tender pages and persist a scoped history record for the run."""
     totals = {
         "fetched": 0,
+        "matched": 0,
         "stored": 0,
         "skipped_missing_id": 0,
         "skipped_invalid_record": 0,
     }
 
-    active_keywords = configured_keywords(db)
-    ordered_paths = sorted(paths)
-    total_pages = len(ordered_paths)
-    for page_index, path in enumerate(ordered_paths, start=1):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        records = payload.get("gridModel") if isinstance(payload, dict) else None
-        if not isinstance(records, list):
-            raise ValueError(f"Missing gridModel array in tender response: {path}")
+    run = IngestionRun(status="running", kind="tenders", category=None)
+    db.add(run)
+    db.commit()
+    run_id = run.id
 
-        for record in records:
-            totals["fetched"] += 1
-            item, status = project_tender_record(record, keywords=active_keywords)
-            if item is None:
-                if status == "missing_id":
-                    totals["skipped_missing_id"] += 1
-                else:
-                    totals["skipped_invalid_record"] += 1
-                continue
+    try:
+        active_keywords = configured_keywords(db)
+        ordered_paths = sorted(paths)
+        total_pages = len(ordered_paths)
+        for page_index, path in enumerate(ordered_paths, start=1):
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            records = payload.get("gridModel") if isinstance(payload, dict) else None
+            if not isinstance(records, list):
+                raise ValueError(f"Missing gridModel array in tender response: {path}")
 
-            statement = insert(Tender).values(**item)
-            update_values = {
-                key: getattr(statement.excluded, key)
-                for key in item
-                if key not in {"source", "source_tender_id", "raw_payload"}
-            }
-            update_values["raw_payload"] = statement.excluded.raw_payload
-            update_values["updated_at"] = datetime.now(timezone.utc)
-            statement = statement.on_conflict_do_update(
-                constraint="uq_tenders_source_tender",
-                set_=update_values,
-            )
-            db.execute(statement)
-            totals["stored"] += 1
+            for record in records:
+                totals["fetched"] += 1
+                item, status = project_tender_record(record, keywords=active_keywords)
+                if item is None:
+                    if status == "missing_id":
+                        totals["skipped_missing_id"] += 1
+                    else:
+                        totals["skipped_invalid_record"] += 1
+                    continue
 
+                if item["has_keyword_match"]:
+                    totals["matched"] += 1
+
+                statement = insert(Tender).values(**item)
+                update_values = {
+                    key: getattr(statement.excluded, key)
+                    for key in item
+                    if key not in {"source", "source_tender_id", "raw_payload"}
+                }
+                update_values["raw_payload"] = statement.excluded.raw_payload
+                update_values["updated_at"] = datetime.now(timezone.utc)
+                statement = statement.on_conflict_do_update(
+                    constraint="uq_tenders_source_tender",
+                    set_=update_values,
+                )
+                db.execute(statement)
+                totals["stored"] += 1
+
+            db.commit()
+            if progress_callback:
+                progress_callback({
+                    "pages_completed": page_index,
+                    "total_pages": total_pages,
+                    **totals,
+                })
+
+        run = db.get(IngestionRun, run_id)
+        run.status = "success"
+        run.finished_at = datetime.now(timezone.utc)
+        run.fetched = totals["fetched"]
+        run.matched = totals["matched"]
+        run.stored = totals["stored"]
         db.commit()
-        if progress_callback:
-            progress_callback({
-                "pages_completed": page_index,
-                "total_pages": total_pages,
-                **totals,
-            })
-
-    return totals
+        return totals
+    except Exception as exc:
+        db.rollback()
+        failed = db.get(IngestionRun, run_id)
+        if failed is not None:
+            failed.status = "failed"
+            failed.error = str(exc)[:5000]
+            failed.finished_at = datetime.now(timezone.utc)
+            db.commit()
+        raise
