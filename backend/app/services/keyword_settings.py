@@ -1,4 +1,4 @@
-"""Database-backed keyword selection, shared by API and both auction importers."""
+"""Database-backed matching keywords shared by auction and tender importers."""
 from __future__ import annotations
 
 from sqlalchemy.orm import Session
