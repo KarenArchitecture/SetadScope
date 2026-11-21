@@ -48,3 +48,37 @@ def test_project_tender_record_skips_rows_without_source_id():
 
     assert item is None
     assert status == "missing_id"
+
+
+
+def test_keyword_relevance_supports_persian_normalization_and_custom_keywords():
+    matched, status = project_tender_record(
+        {
+            "id": 506,
+            "title": "خرید چوب آلات",
+            "domainsDescription": "تامین مصالح و چوب‌آلات جنگلی",
+            "typeName": "مناقصه عمومی",
+        }
+    )
+    assert status == "ready"
+    assert matched["has_keyword_match"] is True
+    assert "چوب" in matched["matched_keywords"]
+
+    unrelated, _ = project_tender_record(
+        {"id": 507, "title": "خرید تجهیزات اداری"}
+    )
+    assert unrelated["has_keyword_match"] is False
+    assert unrelated["matched_keywords"] == []
+
+    custom, _ = project_tender_record(
+        {"id": 508, "title": "فروش ضایعات آلومینیوم"},
+        keywords=("آلومینیوم",),
+    )
+    assert custom["has_keyword_match"] is True
+    assert custom["matched_keywords"] == ["آلومینیوم"]
+
+    suppressed, _ = project_tender_record(
+        {"id": 509, "title": "تامین الوار چوب"},
+        keywords=("آلومینیوم",),
+    )
+    assert suppressed["has_keyword_match"] is False
