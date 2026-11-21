@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, LoaderCircle, Plus, RotateCcw, Trash2 } from "lucide-react";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
+import GlobalSearchBar from "../components/GlobalSearchBar";
 import { getKeywords, updateKeywords } from "../services/api";
 import "./Dashboard.css";
 import "./Settings.css";
@@ -69,6 +70,7 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
       <main className="main-content">
         <header className="topbar">
           <div className="topbar__breadcrumb">SetadScope <span>‹</span> تنظیمات سایت</div>
+          <GlobalSearchBar onNavigate={onNavigate} />
           <ThemeToggle theme={theme} onToggle={onThemeToggle} />
         </header>
         <div className="dashboard-content settings-content">
