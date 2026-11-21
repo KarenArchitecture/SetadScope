@@ -244,6 +244,21 @@ def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
             assert global_search.json()["total"] == 1
             assert global_search.json()["items"][0]["collection_group"] == "amval_tamliki"
 
+            invalid_group_filter = client.get(
+                "/api/auctions",
+                params={"category": "clearance", "collection_group": "executive_agencies"},
+            )
+            assert invalid_group_filter.status_code == 422
+            invalid_search_filter = client.get(
+                "/api/search",
+                params={
+                    "kind": "auction",
+                    "category": "clearance",
+                    "collection_group": "executive_agencies",
+                },
+            )
+            assert invalid_search_filter.status_code == 422
+
             history = client.get(
                 "/api/collection/auctions/history",
                 params={"collection_group": "amval_tamliki", "category": "movable"},
