@@ -35,6 +35,40 @@ def test_page_params_match_captured_setad_request_shape():
     }
 
 
+def test_tender_collector_ignores_environment_proxy_settings(monkeypatch):
+    from setad_scope.collectors import fetch_tenders as collector
+
+    class FakeResponse:
+        text = '<input type="hidden" name="csrf_token" value="fresh-token">'
+        url = "https://etend.setadiran.ir/etend/"
+
+        @staticmethod
+        def raise_for_status():
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.trust_env = True
+            self.proxies = {"https": "http://127.0.0.1:8080"}
+            self.headers = {}
+            self.cookies = []
+
+        @staticmethod
+        def get(*args, **kwargs):
+            return FakeResponse()
+
+    session = FakeSession()
+    monkeypatch.setattr(collector.requests, "Session", lambda: session)
+
+    created, token, landing_url = collector.create_session()
+
+    assert created is session
+    assert created.trust_env is False
+    assert created.proxies == {}
+    assert token == "fresh-token"
+    assert landing_url == FakeResponse.url
+
+
 def test_page_count_uses_server_reported_total_and_record_count():
     assert get_page_count({"total": "128", "records": "3838"}, rows=30) == (128, 3838)
 
