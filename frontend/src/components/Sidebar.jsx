@@ -1,4 +1,4 @@
-import { Activity, ChevronsLeft, ChevronsRight, Database, FileSearch, FileText, Gavel, Search, Settings2 } from "lucide-react";
+import { Activity, ChevronsLeft, ChevronsRight, Database, FileText, Gavel, Search, Settings2 } from "lucide-react";
 
 const LINKS = [
   { page: "search", path: "/search", title: "جست‌وجوی سراسری", icon: Search },
@@ -52,12 +52,6 @@ export default function Sidebar({ page, onNavigate, collapsed, onToggle }) {
         </span>
       </nav>
       <div className="sidebar__bottom">
-        <div className="pipeline-card">
-          <span className="pipeline-card__icon"><FileSearch size={17} /></span>
-          <strong>وضعیت پردازش</strong>
-          <p>داده‌های هر بخش مستقل جمع‌آوری و در PostgreSQL ذخیره می‌شوند.</p>
-          <span className="pipeline-card__status"><span /> بدون تحلیل هوش مصنوعی</span>
-        </div>
         <div className="sidebar__version">SETADSCOPE · نسخه ۰.۴</div>
       </div>
     </aside>
