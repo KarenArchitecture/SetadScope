@@ -107,7 +107,7 @@ export default function GlobalSearchPage() {
       if (requestId !== lastRequestId.current) return;
       setError(
         requestError.response?.data?.detail ||
-        "دریافت نتایج جست‌وجوی سراسری ناموفق بود. اتصال Backend را بررسی کن.",
+        "دریافت نتایج جست‌وجوی سراسری ناموفق بود. اتصال به سرور را بررسی کن.",
       );
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
