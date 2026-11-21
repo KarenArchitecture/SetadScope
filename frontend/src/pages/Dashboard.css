@@ -1533,3 +1533,99 @@
     white-space: normal;
   }
 }
+
+
+/* Primary auction scope: owning collection/source is selected before its category. */
+.auction-source-selector {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 12px;
+  padding: 13px 15px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 3px 12px rgba(25, 50, 80, .04);
+}
+
+.auction-source-selector__copy {
+  min-width: 150px;
+  display: grid;
+  gap: 5px;
+}
+
+.auction-source-selector__copy strong {
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.auction-source-selector__copy small {
+  color: var(--text-muted);
+  font-size: 10px;
+  line-height: 1.7;
+}
+
+.auction-source-selector__options {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.auction-source-selector__option {
+  min-height: 37px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text-secondary);
+  background: var(--surface-soft);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background .16s ease, color .16s ease, border-color .16s ease, box-shadow .16s ease;
+}
+
+.auction-source-selector__option:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.auction-source-selector__option--active,
+.auction-source-selector__option--active:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+@media (max-width: 820px) {
+  .auction-source-selector {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .auction-source-selector__options {
+    width: 100%;
+  }
+
+  .auction-source-selector__option {
+    flex: 1 1 auto;
+  }
+}
+
+@media (max-width: 520px) {
+  .auction-source-selector__options {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .auction-source-selector__option {
+    width: 100%;
+    justify-content: center;
+  }
+}
