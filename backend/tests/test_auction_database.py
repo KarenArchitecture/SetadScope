@@ -88,17 +88,17 @@ def test_legacy_keyword_matched_auction_survives_0005_migration():
         assert legacy.first_seen_at is not None
 
 
-def test_legacy_clearance_source_is_backfilled_to_amval_tamliki():
+def test_legacy_clearance_source_is_migrated_to_shared_scope():
     with SessionLocal() as db:
         legacy = db.scalar(
             select(Auction).where(
-                Auction.source == "setad_clearance_5315",
+                Auction.source == "setad_clearance_shared",
                 Auction.source_party_id == "pre-migration-clearance",
             )
         )
         assert legacy is not None, "Legacy Amval Tamliki clearance row was lost"
         assert legacy.category == "clearance"
-        assert legacy.collection_group == "amval_tamliki"
+        assert legacy.collection_group == "shared"
 
 
 def test_all_category_imports_idempotence_and_http_filters(tmp_path):
@@ -134,7 +134,7 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 assert body["total"] >= 1
                 assert all(item["category"] == category for item in body["items"])
 
-                collection_group = "amval_tamliki" if category == "clearance" else "executive_agencies"
+                collection_group = "shared" if category == "clearance" else "executive_agencies"
                 collection_status = client.get(f"/api/collection/auctions/{category}/status")
                 assert collection_status.status_code == 200
                 assert collection_status.json()["collection_group"] == collection_group
