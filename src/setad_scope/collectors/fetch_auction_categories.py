@@ -37,6 +37,10 @@ def emit_progress(**values):
 
 def create_session(category: str) -> requests.Session:
     session = requests.Session()
+    # Ignore HTTP(S)_PROXY / ALL_PROXY environment variables. The collector
+    # should use the host/container default route instead of app-level proxies.
+    session.trust_env = False
+    session.proxies.clear()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (compatible; SetadScope/0.5; public information monitoring)",
         "Accept": "application/json, text/javascript, */*;q=0.01",
@@ -156,6 +160,9 @@ def collect(
     )
 
     active_session = session or create_session(category)
+    if isinstance(active_session, requests.Session):
+        active_session.trust_env = False
+        active_session.proxies.clear()
     first = fetch_page(active_session, category, start_page, rows)
     total_pages, total_records = page_totals(first, category, rows)
     # eauc browser requests page=0, but the captured response reports page=1.
