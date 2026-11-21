@@ -164,5 +164,7 @@ class IngestionRun(Base):
 class AppSetting(Base):
     """Small, persistent site-wide configuration values."""
 
+    __tablename__ = "app_settings"
+
     key: Mapped[str] = mapped_column(String(100), primary_key=True)
     value: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
