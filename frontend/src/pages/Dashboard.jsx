@@ -35,7 +35,9 @@ const PAGE_SIZE = 20;
 const AUCTION_GROUPS = [
   { key: "executive_agencies", label: "دستگاه‌های اجرایی", description: "مزایده‌های دستگاه‌های اجرایی" },
   { key: "amval_tamliki", label: "سازمان جمع‌آوری و فروش اموال تملیکی", description: "مزایده‌های اموال تملیکی" },
-  { key: "shared", label: "حراج مشترک", description: "تابلوی مرکزی حراج ستاد" },
+];
+const SHARED_AUCTION_CATEGORIES = [
+  { key: "clearance", label: "حراج مشترک" },
 ];
 const AUCTION_CATEGORIES_BY_GROUP = {
   executive_agencies: [
@@ -599,9 +601,14 @@ export default function Dashboard({ kind }) {
   const [collectionGroup, setCollectionGroup] = useState("executive_agencies");
   const [auctionCategory, setAuctionCategory] = useState("movable");
   const [matchedOnly, setMatchedOnly] = useState(!isTender);
-  const availableCategories = AUCTION_CATEGORIES_BY_GROUP[collectionGroup] || AUCTION_CATEGORIES_BY_GROUP.executive_agencies;
+  const availableCategories = [
+    ...(AUCTION_CATEGORIES_BY_GROUP[collectionGroup] || AUCTION_CATEGORIES_BY_GROUP.executive_agencies),
+    ...SHARED_AUCTION_CATEGORIES,
+  ];
   const selectedCategoryLabel = availableCategories.find((item) => item.key === auctionCategory)?.label || "منقول";
-  const isSharedClearance = !isTender && collectionGroup === "shared";
+  // Clearance is a single Central Board feed shared by both owning collections.
+  const isSharedClearance = !isTender && auctionCategory === "clearance";
+  const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
   const [result, setResult] = useState({
     items: [],
     page: 1,
@@ -640,7 +647,7 @@ export default function Dashboard({ kind }) {
         search,
         ...appliedFilters,
         matched_only: matchedOnly,
-        ...(!isTender ? { category: auctionCategory, collection_group: collectionGroup } : {}),
+        ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
         sortBy,
         sortDir,
         page: nextPage,
@@ -666,11 +673,11 @@ export default function Dashboard({ kind }) {
 
   useEffect(() => {
     let active = true;
-    getCollectionStatus(kind, auctionCategory, collectionGroup).then((status) => {
+    getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup).then((status) => {
       if (active) setCollectionState(status);
     }).catch(() => {});
     return () => { active = false; };
-  }, [kind, auctionCategory, collectionGroup]);
+  }, [kind, auctionCategory, effectiveCollectionGroup]);
 
   useEffect(() => {
     if (!ACTIVE_STATES.has(collectionState.status)) return undefined;
@@ -680,7 +687,7 @@ export default function Dashboard({ kind }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind, auctionCategory, collectionGroup);
+        const nextState = await getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup);
         if (cancelled) return;
         setCollectionState(nextState);
         const completedRunKey = nextState.finished_at || nextState.started_at;
@@ -724,7 +731,7 @@ export default function Dashboard({ kind }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, kind, auctionCategory, collectionGroup, loadPage]);
+  }, [collectionState.status, kind, auctionCategory, effectiveCollectionGroup, loadPage]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -892,7 +899,6 @@ export default function Dashboard({ kind }) {
     if (nextGroup === collectionGroup) return;
     lastRequestId.current += 1;
     setCollectionGroup(nextGroup);
-    setAuctionCategory(nextGroup === "shared" ? "clearance" : "movable");
     setSearch("");
     setSearchInput("");
     setFilterDraft({ ...EMPTY_FILTERS });
@@ -975,7 +981,7 @@ export default function Dashboard({ kind }) {
       { duration: 0 },
     );
     try {
-      const nextState = await startCollection(kind, auctionCategory, collectionGroup);
+      const nextState = await startCollection(kind, auctionCategory, effectiveCollectionGroup);
       setCollectionState(nextState);
       notifyToast(
         "info",
@@ -1009,7 +1015,7 @@ export default function Dashboard({ kind }) {
     search,
     ...appliedFilters,
     matched_only: matchedOnly,
-    ...(!isTender ? { category: auctionCategory, collection_group: collectionGroup } : {}),
+    ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
   };
@@ -1090,7 +1096,7 @@ export default function Dashboard({ kind }) {
               </div>
             </section>
           )}
-          {!isTender && !isSharedClearance && (
+          {!isTender && (
             <nav className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
               <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
                 {availableCategories.map(({ key, label }) => (
