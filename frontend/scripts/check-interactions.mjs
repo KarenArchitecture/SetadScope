@@ -71,6 +71,19 @@ assert.match(app, /<GlobalSearchPage key=\{routeVersion\}/);
 assert.match(app, /<Topbar/);
 assert.match(topbar, /<GlobalSearchBar onNavigate=\{onNavigate\} initialQuery=\{initialQuery\}/);
 assert.match(topbar, /اتصال به سرور برقرار است/);
+
+// Header layout uses symmetric side tracks around a dedicated centered search slot.
+// Smaller viewports move search to its own row instead of redistributing the header.
+const topbarLayoutStart = redesign.indexOf("/* Three fixed header zones:");
+const topbarResponsiveStart = redesign.indexOf("/* Below desktop widths", topbarLayoutStart);
+assert.ok(topbarLayoutStart >= 0 && topbarResponsiveStart > topbarLayoutStart);
+const desktopTopbarLayout = redesign.slice(topbarLayoutStart, topbarResponsiveStart);
+const responsiveTopbarLayout = redesign.slice(topbarResponsiveStart, redesign.indexOf("/* Unified, fixed-footprint collection/export action card.", topbarResponsiveStart));
+assert.match(desktopTopbarLayout, /display:\s*grid/);
+assert.match(desktopTopbarLayout, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 470px\) minmax\(0, 1fr\)/);
+assert.match(desktopTopbarLayout, /grid-template-areas:\s*"breadcrumb search actions"/);
+assert.match(desktopTopbarLayout, /\.topbar > \.global-search-bar\s*\{[^}]*grid-area:\s*search/s);
+assert.match(responsiveTopbarLayout, /grid-template-areas:\s*"breadcrumb actions"\s*"search search"/);
 assert.doesNotMatch(dashboard, /<header className="topbar"/);
 assert.doesNotMatch(settings, /<header className="topbar"/);
 assert.doesNotMatch(globalSearchPage, /<header className="topbar"/);
