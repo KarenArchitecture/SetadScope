@@ -546,3 +546,30 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
     overflow: visible;
   }
 }
+
+
+/* The global search stays reachable without squeezing the topbar on mobile. */
+.topbar > .global-search-bar {
+  flex: 0 1 470px;
+  margin-inline: auto;
+}
+@media (max-width: 720px) {
+  .topbar {
+    height: auto;
+    min-height: 54px;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 9px 12px;
+    padding-block: 10px;
+  }
+  .topbar__breadcrumb { order: 1; flex: 1 1 auto; }
+  .topbar__actions { order: 2; margin-inline-start: auto; }
+  .topbar > .theme-toggle { order: 2; margin-inline-start: auto; }
+  .topbar > .global-search-bar {
+    order: 3;
+    flex: 1 0 100%;
+    width: 100%;
+    min-width: 0;
+    margin: 0;
+  }
+}
