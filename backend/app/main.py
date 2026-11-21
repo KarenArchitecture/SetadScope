@@ -490,6 +490,10 @@ def auction_filter_options(
         "provinces": list(provinces),
         "cities": [{"city": city, "province": province} for city, province in city_rows],
         "states": list(states),
+        "collection_groups": [
+            {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
+            {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
+        ],
     }
 
 
@@ -664,6 +668,11 @@ def get_auction_collection_history(
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
 ):
+    if collection_group != "all" and category is not None:
+        try:
+            resolve_collection_group(category, collection_group)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     query = select(IngestionRun).where(IngestionRun.kind == "auctions")
     if collection_group != "all":
         query = query.where(IngestionRun.collection_group == collection_group)
@@ -736,6 +745,11 @@ def get_auctions(
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    if collection_group != "all":
+        try:
+            resolve_collection_group(category, collection_group)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     if price_min is not None and price_max is not None and price_min > price_max:
         raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
 
@@ -785,6 +799,11 @@ def export_auctions(
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    if collection_group != "all":
+        try:
+            resolve_collection_group(category, collection_group)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
