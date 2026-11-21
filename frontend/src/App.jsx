@@ -2,8 +2,10 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Dashboard from "./pages/Dashboard";
 import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
+import GlobalSearchPage from "./pages/GlobalSearchPage";
 
 function resolvePage() {
+  if (window.location.pathname.startsWith("/search")) return "search";
   if (window.location.pathname.startsWith("/settings")) return "settings";
   return window.location.pathname.startsWith("/tenders") ? "tenders" : "auctions";
 }
@@ -29,6 +31,7 @@ function revealGeometry(event) {
 
 export default function App() {
   const [page, setPage] = useState(resolvePage);
+  const [routeVersion, setRouteVersion] = useState(0);
   const [theme, setTheme] = useState(initialTheme);
   const [themeTransition, setThemeTransition] = useState(null);
   const switchingRef = useRef(false);
@@ -48,7 +51,10 @@ export default function App() {
     if (window.location.pathname === "/") {
       window.history.replaceState({}, "", "/auctions");
     }
-    const handlePopState = () => setPage(resolvePage());
+    const handlePopState = () => {
+      setPage(resolvePage());
+      setRouteVersion((current) => current + 1);
+    };
     window.addEventListener("popstate", handlePopState);
     return () => window.removeEventListener("popstate", handlePopState);
   }, []);
@@ -56,6 +62,7 @@ export default function App() {
   function navigate(path) {
     if (window.location.pathname !== path) window.history.pushState({}, "", path);
     setPage(resolvePage());
+    setRouteVersion((current) => current + 1);
   }
 
   function onThemeToggle(event) {
@@ -88,7 +95,9 @@ export default function App() {
     <>
       {page === "settings"
         ? <Settings onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />
-        : <Dashboard key={page} kind={page} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />}
+        : page === "search"
+          ? <GlobalSearchPage key={routeVersion} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />
+          : <Dashboard key={page} kind={page} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />}
       {themeTransition && (
         <ThemeTransition transition={themeTransition} onAnimationEnd={onThemeTransitionEnd} />
       )}
