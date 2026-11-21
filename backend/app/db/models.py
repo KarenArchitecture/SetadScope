@@ -141,6 +141,12 @@ class IngestionRun(Base):
     skipped_expired: Mapped[int] = mapped_column(BigInteger, default=0)
     skipped_unknown_deadline: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text)
+    kind: Mapped[str | None] = mapped_column(String(20))
+    category: Mapped[str | None] = mapped_column(String(24))
+
+    __table_args__ = (
+        Index("ix_ingestion_runs_scope_finished", "kind", "category", "status", "finished_at"),
+    )
 
 
 class AppSetting(Base):
