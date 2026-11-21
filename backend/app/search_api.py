@@ -168,11 +168,14 @@ def global_search(
 
     rows = _searchable_rows(search, source, province, city, category, status, matched_only)
     base = select(rows)
+
+    # Tab counts stay meaningful when an auction-only category filter is active.
+    summary_rows = _searchable_rows(search, source, province, city, None, status, matched_only)
     auction_count = db.scalar(
-        select(func.count()).select_from(rows).where(rows.c.record_type == "auction")
+        select(func.count()).select_from(summary_rows).where(summary_rows.c.record_type == "auction")
     ) or 0
     tender_count = db.scalar(
-        select(func.count()).select_from(rows).where(rows.c.record_type == "tender")
+        select(func.count()).select_from(summary_rows).where(summary_rows.c.record_type == "tender")
     ) or 0
 
     if kind != "all":
