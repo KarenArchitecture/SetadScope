@@ -230,6 +230,21 @@ def test_tender_relevance_filter_and_export_share_same_dataset(tmp_path):
             assert result["stored"] == 2
 
             client = TestClient(app)
+            collection_status = client.get("/api/collection/tenders/status")
+            assert collection_status.status_code == 200
+            expected_update = db.scalar(
+                select(IngestionRun.finished_at)
+                .where(
+                    IngestionRun.kind == "tenders",
+                    IngestionRun.category.is_(None),
+                    IngestionRun.status == "success",
+                )
+                .order_by(IngestionRun.finished_at.desc())
+                .limit(1)
+            )
+            assert expected_update is not None
+            assert collection_status.json()["last_updated_at"] == expected_update.isoformat()
+
             matched = client.get("/api/tenders", params={"matched_only": "true", "search": "T-7999"})
             assert matched.status_code == 200, matched.text
             source_ids = {r["source_tender_id"] for r in matched.json()["items"]}
