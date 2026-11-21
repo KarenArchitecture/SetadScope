@@ -1,49 +1,6 @@
-/* SetadScope visual system
-   Dark: charcoal #171717 / warm brass #D5B783
-   Light: warm paper / muted bronze #785839
-   This file loads after legacy page styles, so no old blue accents leak through.
-*/
-:root,
-html[data-theme="light"] {
-  color-scheme: light;
-  --page-bg: #f5f4f1;
-  --surface: #ffffff;
-  --surface-soft: #f6f5f2;
-  --surface-hover: #eeece7;
-  --sidebar-bg: #eae8e3;
-  --border: #dcd9d2;
-  --text-primary: #262523;
-  --text-secondary: #55534e;
-  --text-muted: #6e6b64;
-  --accent: #785839;
-  --accent-hover: #60452f;
-  --accent-ink: #fff;
-  --accent-soft: #f0e8de;
-  --accent-ring: rgba(120, 88, 57, .2);
-  --selected-bg: #f0e8de;
-  --shadow: rgba(26, 24, 21, .065);
-}
-
-html[data-theme="dark"] {
-  color-scheme: dark;
-  background: #171717;
-  --page-bg: #171717;
-  --surface: #202020;
-  --surface-soft: #272727;
-  --surface-hover: #303030;
-  --sidebar-bg: #1b1b1b;
-  --border: #353535;
-  --text-primary: #f2f0ec;
-  --text-secondary: #cbc7c0;
-  --text-muted: #aaa59d;
-  --accent: #d5b783;
-  --accent-hover: #e5c99a;
-  --accent-ink: #1b1916;
-  --accent-soft: #34302a;
-  --accent-ring: rgba(213, 183, 131, .22);
-  --selected-bg: #34302a;
-  --shadow: rgba(0, 0, 0, .17);
-}
+/* SetadScope shared visual language.
+   All palette tokens are defined once in styles/global.css.
+   Dark: #171717 charcoal + #D5B783 bronze; light: warm neutral. */
 
 html,
 body {
@@ -394,39 +351,6 @@ input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 }
 
 
-/* Override older dark-mode selectors with greater specificity so the accent
-   remains warm bronze in every interactive state, not the previous blue. */
-html[data-theme="dark"] .auction-category-nav__tab--active,
-html[data-theme="dark"] .auction-category-nav__tab--active:hover,
-html[data-theme="dark"] .jalali-calendar__day--selected,
-html[data-theme="dark"] .jalali-calendar__day--selected:hover {
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-color: var(--accent);
-}
-html[data-theme="dark"] .auction-category-nav__tab:hover:not(.auction-category-nav__tab--active),
-html[data-theme="dark"] .filters-reset:hover:not(:disabled),
-html[data-theme="dark"] .jalali-calendar__day:hover:not(.jalali-calendar__day--selected) {
-  color: var(--accent);
-  border-color: var(--border);
-  background: var(--accent-soft);
-}
-html[data-theme="dark"] .filters-panel__toggle-icon {
-  color: var(--accent);
-  border-color: var(--border);
-  background: var(--accent-soft);
-}
-html[data-theme="dark"] .search-bar:focus-within {
-  border-color: var(--accent);
-  background: var(--surface);
-  box-shadow: 0 0 0 3px var(--accent-ring);
-}
-html[data-theme="dark"] .jalali-calendar__day--selected:hover { color: var(--accent-ink); }
-/* The earlier stylesheet colors this selected-day icon separately. */
-html[data-theme="dark"] .jalali-calendar__day--today { color: var(--accent); }
-html[data-theme="dark"] .jalali-calendar__day--selected { color: var(--accent-ink); }
-
-
 /* Secondary dashboard surfaces: readable 12–14px UI copy, neutral progress. */
 .collection-progress,
 .notice-banner { background: var(--surface-soft); border-color: var(--border); color: var(--text-secondary); }
@@ -451,3 +375,41 @@ html[data-theme="dark"] .collection-progress__track { background: var(--border);
 html[data-theme="dark"] .collection-progress__fill,
 html[data-theme="dark"] .collection-progress__fill--active { background: var(--accent); }
 html[data-theme="dark"] .collection-progress:not(.collection-progress--failed) { background: var(--surface-soft); }
+
+
+/* Semantic statuses remain distinct; neither success nor errors use the brand accent. */
+html[data-theme="dark"] .state-pill--published {
+  color: #86d4a6;
+  background: #1e3a2c;
+}
+html[data-theme="dark"] .connection-status--online {
+  color: #86d4a6;
+}
+html[data-theme="dark"] .connection-status--online > span {
+  background: #63bd8e;
+  box-shadow: 0 0 0 3px #233d2d;
+}
+html[data-theme="dark"] .connection-status--offline {
+  color: #edba7a;
+}
+html[data-theme="dark"] .connection-status--offline > span {
+  background: #dc9f5e;
+  box-shadow: 0 0 0 3px #443523;
+}
+html[data-theme="dark"] .collection-progress--failed {
+  background: var(--danger-bg);
+  border-color: #76434a;
+}
+html[data-theme="dark"] .collection-progress--failed .collection-progress__fill {
+  background: #c96b72;
+}
+/* Keep all neutral surfaces consistent in both routes. */
+.filters-panel__collapsible-content,
+.filters-panel__body {
+  background: var(--surface);
+}
+.auction-category-nav, .topbar, .stat-card, .data-panel, .filters-panel,
+.settings-card, .detail-modal, .filter-date-group, .jalali-calendar {
+  border-color: var(--border);
+}
+.raw-tag { background: var(--accent-soft); color: var(--accent); }
