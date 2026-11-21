@@ -87,11 +87,11 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
             </div>
             <div className="settings-theme-options" role="group" aria-label="انتخاب تم">
               <button type="button" className={"settings-theme-option " + (theme === "light" ? "settings-theme-option--selected" : "")}
-                aria-pressed={theme === "light"} onClick={() => theme === "dark" && onThemeToggle()}>
+                aria-pressed={theme === "light"} onClick={(event) => theme === "dark" && onThemeToggle(event)}>
                 روشن {theme === "light" && <CheckCircle2 size={16} />}
               </button>
               <button type="button" className={"settings-theme-option " + (theme === "dark" ? "settings-theme-option--selected" : "")}
-                aria-pressed={theme === "dark"} onClick={() => theme === "light" && onThemeToggle()}>
+                aria-pressed={theme === "dark"} onClick={(event) => theme === "light" && onThemeToggle(event)}>
                 تاریک {theme === "dark" && <CheckCircle2 size={16} />}
               </button>
             </div>
