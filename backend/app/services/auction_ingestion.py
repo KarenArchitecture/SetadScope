@@ -1,8 +1,4 @@
-"""Schema-aware, lossless projection and import for five public auction categories.
-
-Source identity uses (source, source_party_id), NOT auction number:
-a single rental auction can contain multiple independently offered items.
-"""
+"""Lossless auction projection and idempotent import across collection groups."""
 from __future__ import annotations
 
 import json
@@ -17,14 +13,26 @@ from app.services.date_normalization import parse_setad_datetime
 from app.services.ingestion import to_decimal
 from app.services.keyword_matching import matched_keywords
 from app.services.keyword_settings import configured_keywords
+from setad_scope.collectors.auction_sources.registry import (
+    ALL_CATEGORIES,
+    CATEGORIES_BY_GROUP,
+    COLLECTION_GROUPS,
+    resolve_collection_group,
+    source_for,
+)
 
-AUCTION_CATEGORIES = ("movable", "immovable", "rental", "minor", "clearance")
+AUCTION_CATEGORIES = ALL_CATEGORIES
+AUCTION_CATEGORIES_BY_GROUP = CATEGORIES_BY_GROUP
+SOURCES_BY_GROUP = {
+    group: {category: source.source for category, source in sources.items()}
+    for group, sources in __import__(
+        "setad_scope.collectors.auction_sources.registry", fromlist=["SOURCE_REGISTRY"]
+    ).SOURCE_REGISTRY.items()
+}
+# Backward-compatible category-to-source mapping for existing imports and tests.
 SOURCES = {
-    "movable": "setad_main_estate",  # retain the original unique key for migration compatibility
-    "immovable": "setad_immovable",
-    "rental": "setad_rental",
-    "minor": "setad_minor",
-    "clearance": "setad_clearance_5315",
+    category: source_for(category).source
+    for category in AUCTION_CATEGORIES
 }
 
 
@@ -46,10 +54,15 @@ def _id(value):
     return str(value) if value is not None and value != "" else None
 
 
-def project_auction(record: dict, category: str, keywords: tuple[str, ...] | None = None) -> tuple[dict | None, str]:
+def project_auction(
+    record: dict,
+    category: str,
+    keywords: tuple[str, ...] | None = None,
+    collection_group: str | None = None,
+) -> tuple[dict | None, str]:
     """Return normalized row and status. Store all rows, including nonmatches and expired."""
-    if category not in AUCTION_CATEGORIES:
-        raise ValueError(f"Unknown auction category: {category}")
+    group = resolve_collection_group(category, collection_group)
+    source_config = source_for(category, group)
     if not isinstance(record, dict):
         return None, "invalid"
     party = _dict(record.get("auctionParty"))
@@ -59,13 +72,11 @@ def project_auction(record: dict, category: str, keywords: tuple[str, ...] | Non
         if category == "movable"
         else (_dict(record.get("auction")) or _dict(record.get("immovableAuction")))
     )
-    if category == "minor":
-        auction = record
-    if category == "clearance":
+    if category in {"minor", "clearance"}:
         auction = record
 
     if category == "clearance":
-        # cartId identifies each central-board card, even if multiple cards have a common number.
+        # cartId identifies each central-board card, even if cards share a number.
         record_id = _id(record.get("cartId") or record.get("ticketId"))
     else:
         record_id = _id(details.get("id"))
@@ -163,7 +174,8 @@ def project_auction(record: dict, category: str, keywords: tuple[str, ...] | Non
         source_url = "https://eauc.setadiran.ir/eauc/welcome.action?gateway=setad"
 
     normalized = {
-        "source": SOURCES[category],
+        "collection_group": group,
+        "source": source_config.source,
         "source_party_id": record_id,
         "category": category,
         "has_keyword_match": bool(keywords),
@@ -197,7 +209,7 @@ def project_auction(record: dict, category: str, keywords: tuple[str, ...] | Non
         "trust_opened_at": _date(auction, "trustOpenedDate") if category != "clearance" else None,
         "base_total_price": to_decimal(price),
         "trust_amount": to_decimal(trust_amount),
-        "total_volume_m3": None,  # never guess volume from unverified source fields
+        "total_volume_m3": None,
         "money_unit": "IRR" if category == "clearance" else None,
         "source_url": source_url,
         "matched_keywords": keywords,
@@ -206,11 +218,29 @@ def project_auction(record: dict, category: str, keywords: tuple[str, ...] | Non
     return normalized, "matched" if keywords else "unmatched"
 
 
-def import_auction_pages(db: Session, paths: list[Path], category: str, progress_callback=None) -> dict[str, int]:
+def import_auction_pages(
+    db: Session,
+    paths: list[Path],
+    category: str,
+    progress_callback=None,
+    collection_group: str | None = None,
+) -> dict[str, int]:
+    group = resolve_collection_group(category, collection_group)
     if category not in AUCTION_CATEGORIES:
         raise ValueError(f"Unknown auction category: {category}")
-    totals = {"fetched": 0, "matched": 0, "stored": 0, "skipped_missing_id": 0, "skipped_invalid_record": 0}
-    run = IngestionRun(status="running", kind="auctions", category=category)
+    totals = {
+        "fetched": 0,
+        "matched": 0,
+        "stored": 0,
+        "skipped_missing_id": 0,
+        "skipped_invalid_record": 0,
+    }
+    run = IngestionRun(
+        status="running",
+        kind="auctions",
+        category=category,
+        collection_group=group,
+    )
     db.add(run)
     db.commit()
     run_id = run.id
@@ -223,14 +253,16 @@ def import_auction_pages(db: Session, paths: list[Path], category: str, progress
                 raise ValueError(f"Expected array missing in {path}")
             for record in rows:
                 totals["fetched"] += 1
-                item, status = project_auction(record, category, keywords=active_keywords)
+                item, status = project_auction(
+                    record, category, keywords=active_keywords, collection_group=group,
+                )
                 if item is None:
                     totals["skipped_missing_id" if status == "missing_id" else "skipped_invalid_record"] += 1
                     continue
                 if item["has_keyword_match"]:
                     totals["matched"] += 1
                 stmt = insert(Auction).values(**item).on_conflict_do_update(
-                    constraint="uq_auctions_source_party",
+                    constraint="uq_auctions_group_source_party",
                     set_={**item, "updated_at": datetime.now(timezone.utc)},
                 )
                 db.execute(stmt)
