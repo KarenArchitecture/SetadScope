@@ -108,6 +108,24 @@ jobs:
                   {"keywords": '["چوب"]', "payload": '{"marker": "pre-migration"}'},
               )
           PY
+      - name: Upgrade to pre-tender-matching schema
+        working-directory: backend
+        run: alembic upgrade 0006
+      - name: Seed archived tender before relevance migration
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy import create_engine, text
+          engine = create_engine(os.environ["DATABASE_URL"])
+          with engine.begin() as connection:
+              connection.execute(
+                  text("""INSERT INTO tenders
+                  (source, source_tender_id, title, description, raw_payload)
+                  VALUES ('setad_tender', 'pre-0007-tender', 'تامین چوب جنگلی',
+                  'مناقصه آزمایشی مرتبط', CAST(:payload AS jsonb))"""),
+                  {"payload": '{"marker": "pre-tender-keyword-migration"}'},
+              )
+          PY
       - name: Upgrade existing PostgreSQL data to latest schema
         working-directory: backend
         run: alembic upgrade head
