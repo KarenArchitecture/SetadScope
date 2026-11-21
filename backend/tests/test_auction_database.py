@@ -15,7 +15,7 @@ if os.getenv("SETADSCOPE_TEST_POSTGRES") != "1":
 
 from fastapi.testclient import TestClient
 from sqlalchemy import delete, func, select
-from app.db.models import Auction
+from app.db.models import Auction, IngestionRun
 from app.db.session import SessionLocal
 from app.main import app
 from app.services.auction_ingestion import SOURCES, import_auction_pages
@@ -119,6 +119,22 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 body = response.json()
                 assert body["total"] >= 1
                 assert all(item["category"] == category for item in body["items"])
+
+                collection_status = client.get(f"/api/collection/auctions/{category}/status")
+                assert collection_status.status_code == 200
+                with SessionLocal() as history_db:
+                    expected_update = history_db.scalar(
+                        select(IngestionRun.finished_at)
+                        .where(
+                            IngestionRun.kind == "auctions",
+                            IngestionRun.category == category,
+                            IngestionRun.status == "success",
+                        )
+                        .order_by(IngestionRun.finished_at.desc())
+                        .limit(1)
+                    )
+                assert expected_update is not None
+                assert collection_status.json()["last_updated_at"] == expected_update.isoformat()
 
                 workbook = client.get(
                     "/api/auctions/export.xlsx",
