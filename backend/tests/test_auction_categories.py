@@ -165,6 +165,79 @@ def test_pagination_totals_for_both_apis():
     assert page_totals({"totalPages": 44, "totalElements": 218}, "clearance", 5) == (44, 218)
 
 
+def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
+    from setad_scope.collectors.auction_sources.registry import (
+        CATEGORIES_BY_GROUP,
+        resolve_collection_group,
+    )
+
+    expected_eauc = ("movable", "immovable", "rental", "minor")
+    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_eauc
+    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc + ("clearance",)
+
+    for group in ("executive_agencies", "amval_tamliki"):
+        for category, endpoint in {
+            "movable": "mainEstate-Load.action",
+            "immovable": "mainImmovable-Load.action",
+            "rental": "mainRental-Load.action",
+            "minor": "mainMinor-Load.action",
+        }.items():
+            url, params = request_details(category, 0, 30, group)
+            assert endpoint in url
+            assert params["page"] == 0
+            assert params["rows"] == 30
+
+    clearance_url, clearance_params = request_details("clearance", 0, 5, "amval_tamliki")
+    assert "/api/centralboard/cards/" in clearance_url
+    assert clearance_params["selectedOrganization"] == "5315"
+    assert resolve_collection_group("clearance") == "amval_tamliki"
+    with pytest.raises(ValueError, match="not configured"):
+        resolve_collection_group("clearance", "executive_agencies")
+
+
+def test_project_auction_records_the_explicit_collection_group():
+    raw = {
+        "auctionParty": {
+            "id": 1393501,
+            "title": "فروش باتری ups",
+            "baseTotalPrice": 1641500000,
+            "visitCity": city("مراوه تپه", "گلستان"),
+            "auction": auction("فروش باتری ups"),
+        }
+    }
+    executive, _ = project_auction(raw, "movable", collection_group="executive_agencies")
+    amval, _ = project_auction(raw, "movable", collection_group="amval_tamliki")
+
+    assert executive["collection_group"] == "executive_agencies"
+    assert amval["collection_group"] == "amval_tamliki"
+    assert executive["source"] == amval["source"] == "setad_main_estate"
+
+
+def test_amval_manifest_is_scoped_even_when_endpoint_and_payload_shape_are_shared(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    calls = []
+
+    def fake_fetch(session, category, page, rows, collection_group=None):
+        calls.append((collection_group, page))
+        return {"gridModel": [{"id": 700 + page}], "page": page or 1, "total": 2, "records": 2}
+
+    monkeypatch.setattr(module, "fetch_page", fake_fetch)
+    root = tmp_path / "amval" / "movable"
+    summary = collect(
+        "movable",
+        raw_dir=root,
+        session=Mock(),
+        delay=0,
+        collection_group="amval_tamliki",
+    )
+
+    assert summary["collection_group"] == "amval_tamliki"
+    assert calls == [("amval_tamliki", 0), ("amval_tamliki", 2)]
+    manifest = json.loads(next(root.glob("movable_run_*.json")).read_text(encoding="utf-8"))
+    assert manifest["collection_group"] == "amval_tamliki"
+
+
 def test_auction_collector_ignores_environment_proxy_settings():
     from setad_scope.collectors import fetch_auction_categories as module
 
