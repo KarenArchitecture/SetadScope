@@ -16,6 +16,8 @@ from sqlalchemy.orm import Session
 
 from app.db.models import Tender
 from app.services.date_normalization import parse_setad_datetime
+from app.services.keyword_matching import matched_keywords
+from app.services.keyword_settings import configured_keywords
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
@@ -38,7 +40,7 @@ def _organization_name(value: object) -> str | None:
     return _as_text(value)
 
 
-def project_tender_record(record: dict[str, Any]) -> tuple[dict[str, Any] | None, str]:
+def project_tender_record(record: dict[str, Any], keywords: tuple[str, ...] | None = None) -> tuple[dict[str, Any] | None, str]:
     """Project one gridModel row; do not infer or convert source date semantics."""
     if not isinstance(record, dict):
         return None, "invalid_record"
@@ -47,8 +49,15 @@ def project_tender_record(record: dict[str, Any]) -> tuple[dict[str, Any] | None
     if source_id is None or str(source_id).strip() == "":
         return None, "missing_id"
 
+    found = matched_keywords(
+        record.get("title"), record.get("domainsDescription") or record.get("description"),
+        record.get("typeName"), keywords=keywords,
+    )
+
     return {
         "source": SOURCE,
+        "has_keyword_match": bool(found),
+        "matched_keywords": found,
         "source_tender_id": str(source_id),
         "tender_number": _as_text(record.get("number")),
         "title": _as_text(record.get("title")),
@@ -80,6 +89,7 @@ def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) 
         "skipped_invalid_record": 0,
     }
 
+    active_keywords = configured_keywords(db)
     ordered_paths = sorted(paths)
     total_pages = len(ordered_paths)
     for page_index, path in enumerate(ordered_paths, start=1):
@@ -90,7 +100,7 @@ def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) 
 
         for record in records:
             totals["fetched"] += 1
-            item, status = project_tender_record(record)
+            item, status = project_tender_record(record, keywords=active_keywords)
             if item is None:
                 if status == "missing_id":
                     totals["skipped_missing_id"] += 1
