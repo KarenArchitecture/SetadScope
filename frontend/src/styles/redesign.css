@@ -415,6 +415,10 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
 .raw-tag { background: var(--accent-soft); color: var(--accent); }
 
 
+/* Calendars inside advanced search must escape the table panel's bounds.
+   Only the data-table wrapper itself remains horizontally scrollable. */
+.data-panel { overflow: visible; }
+
 /* Inside-table advanced search: one cohesive panel instead of a separate page section. */
 .data-panel > .filters-panel {
   margin: 0 clamp(12px, 1.5vw, 21px) 16px;
