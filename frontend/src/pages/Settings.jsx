@@ -76,7 +76,7 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
             <div>
               <span className="eyebrow">شخصی‌سازی سامانه</span>
               <h1>تنظیمات سایت</h1>
-              <p>ظاهر سامانه و کلیدواژه‌های تشخیص مزایده‌های مرتبط را مدیریت کنید.</p>
+              <p>ظاهر سامانه و کلیدواژه‌های تشخیص مزایده‌ها و مناقصه‌های مرتبط را مدیریت کنید.</p>
             </div>
           </section>
 
@@ -100,7 +100,7 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
           <section className="settings-card" aria-labelledby="keyword-heading">
             <div className="settings-card__heading">
               <div className="settings-card__title"><KeyRound size={20} /><h2 id="keyword-heading">کلیدواژه‌های مرتبط</h2></div>
-              <p>هر مزایده با داشتن حداقل یکی از کلیدواژه‌های زیر مرتبط شناخته می‌شود (منطق OR).</p>
+              <p>هر آگهی مزایده یا مناقصه با داشتن حداقل یکی از کلیدواژه‌های زیر مرتبط شناخته می‌شود (منطق OR).</p>
             </div>
             {loading ? (
               <div className="settings-loading"><LoaderCircle size={18} className="spin" /> در حال دریافت تنظیمات...</div>
