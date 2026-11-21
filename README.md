@@ -168,11 +168,11 @@ JSONB and normalized columns.
 To run a complete category fetch and import in PowerShell:
 
 ```powershell
-.\setad.ps1 collect-category -Category movable
-.\setad.ps1 collect-category -Category immovable
-.\setad.ps1 collect-category -Category rental
-.\setad.ps1 collect-category -Category minor
-.\setad.ps1 collect-category -Category clearance
+.\setad.ps1 collect-category -Category movable -Group executive_agencies
+.\setad.ps1 collect-category -Category immovable -Group executive_agencies
+.\setad.ps1 collect-category -Category movable -Group amval_tamliki
+.\setad.ps1 collect-category -Category rental -Group amval_tamliki
+.\setad.ps1 collect-category -Category clearance -Group shared
 ```
 
 Or use each category's **جمع‌آوری** button. Both CLI and UI use server-reported page counts. The first request follows
