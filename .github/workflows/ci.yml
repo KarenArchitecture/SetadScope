@@ -42,6 +42,9 @@ jobs:
       - name: Verify charcoal and bronze theme palette
         run: npm run test:theme
         working-directory: frontend
+      - name: Verify integrated search and theme interactions
+        run: npm run test:interactions
+        working-directory: frontend
       - name: Build frontend
         run: npm run build
         working-directory: frontend
