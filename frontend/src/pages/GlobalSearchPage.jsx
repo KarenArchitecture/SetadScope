@@ -4,6 +4,7 @@ import ListingTable from "../components/ListingTable";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import GlobalSearchBar from "../components/GlobalSearchBar";
+import { notifyToast } from "../utils/toast";
 import { DetailModal } from "./Dashboard";
 import { getAuctionById, getGlobalSearch, getTenderById } from "../services/api";
 import "./Dashboard.css";
@@ -231,6 +232,7 @@ export default function GlobalSearchPage({
       setSelectedRecord(record);
     } catch {
       setError("دریافت جزئیات این معامله ناموفق بود.");
+      notifyToast("error", "دریافت جزئیات این معامله ناموفق بود.");
     } finally {
       setDetailLoading(false);
     }
