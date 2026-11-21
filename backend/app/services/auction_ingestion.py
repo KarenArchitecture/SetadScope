@@ -210,7 +210,7 @@ def import_auction_pages(db: Session, paths: list[Path], category: str, progress
     if category not in AUCTION_CATEGORIES:
         raise ValueError(f"Unknown auction category: {category}")
     totals = {"fetched": 0, "matched": 0, "stored": 0, "skipped_missing_id": 0, "skipped_invalid_record": 0}
-    run = IngestionRun(status="running")
+    run = IngestionRun(status="running", kind="auctions", category=category)
     db.add(run)
     db.commit()
     run_id = run.id
