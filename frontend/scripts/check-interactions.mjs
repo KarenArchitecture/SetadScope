@@ -14,6 +14,7 @@ const transitionCss = read("src/components/ThemeTransition.css");
 const redesign = read("src/styles/redesign.css");
 const settings = read("src/pages/Settings.jsx");
 const topbar = read("src/components/Topbar.jsx");
+const sidebar = read("src/components/Sidebar.jsx");
 
 // One keyword-relevance control, on both auction/tender pages,
 // integrated into the advanced-search header rather than the category tabs.
@@ -63,7 +64,6 @@ console.log("UI interaction checks passed: advanced search, sidebar and theme re
 // Global search is available from the topbar and sidebar on every workspace page.
 const globalSearchPage = read("src/pages/GlobalSearchPage.jsx");
 const globalSearchBar = read("src/components/GlobalSearchBar.jsx");
-const sidebar = read("src/components/Sidebar.jsx");
 const api = read("src/services/api.js");
 const searchApi = read("../backend/app/search_api.py");
 assert.match(app, /pathname\.startsWith\("\/search"\)/);
