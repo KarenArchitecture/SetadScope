@@ -1,15 +1,12 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, KeyRound, LoaderCircle, Plus, RotateCcw, Trash2 } from "lucide-react";
-import Sidebar from "../components/Sidebar";
-import ThemeToggle from "../components/ThemeToggle";
-import GlobalSearchBar from "../components/GlobalSearchBar";
 import { notifyToast } from "../utils/toast";
 import { getKeywords, updateKeywords } from "../services/api";
 import "./Dashboard.css";
 import "./Settings.css";
 import "../styles/redesign.css";
 
-export default function Settings({ onNavigate, theme, onThemeToggle, sidebarCollapsed, onSidebarToggle }) {
+export default function Settings({ theme, onThemeToggle }) {
   const [keywords, setKeywords] = useState([]);
   const [original, setOriginal] = useState([]);
   const [newKeyword, setNewKeyword] = useState("");
@@ -74,15 +71,7 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
   }
 
   return (
-    <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
-      <Sidebar page="settings" onNavigate={onNavigate} collapsed={sidebarCollapsed} onToggle={onSidebarToggle} />
-      <main className="main-content">
-        <header className="topbar">
-          <div className="topbar__breadcrumb">SetadScope <span>‹</span> تنظیمات سایت</div>
-          <GlobalSearchBar onNavigate={onNavigate} />
-          <ThemeToggle theme={theme} onToggle={onThemeToggle} />
-        </header>
-        <div className="dashboard-content settings-content">
+    <div className="dashboard-content settings-content">
           <section className="page-heading">
             <div>
               <span className="eyebrow">شخصی‌سازی سامانه</span>
@@ -152,8 +141,6 @@ export default function Settings({ onNavigate, theme, onThemeToggle, sidebarColl
               </form>
             )}
           </section>
-        </div>
-      </main>
     </div>
   );
 }
