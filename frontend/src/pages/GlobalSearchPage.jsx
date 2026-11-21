@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
-import Sidebar from "../components/Sidebar";
-import ThemeToggle from "../components/ThemeToggle";
-import GlobalSearchBar from "../components/GlobalSearchBar";
 import { notifyToast } from "../utils/toast";
 import { DetailModal } from "./Dashboard";
 import { getAuctionById, getGlobalSearch, getTenderById } from "../services/api";
@@ -58,13 +55,7 @@ function TypeBadge({ kind }) {
   );
 }
 
-export default function GlobalSearchPage({
-  onNavigate,
-  theme,
-  onThemeToggle,
-  sidebarCollapsed,
-  onSidebarToggle,
-}) {
+export default function GlobalSearchPage() {
   const initialQuery = new URLSearchParams(window.location.search).get("q") || "";
   const [query] = useState(initialQuery);
   const [kind, setKind] = useState("all");
@@ -275,18 +266,8 @@ export default function GlobalSearchPage({
   const canReset = Boolean(source || category || province || status !== "all" || matchedOnly);
 
   return (
-    <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
-      <Sidebar page="search" onNavigate={onNavigate} collapsed={sidebarCollapsed} onToggle={onSidebarToggle} />
-      <main className="main-content" id="global-search">
-        <header className="topbar">
-          <div className="topbar__breadcrumb">SetadScope <span>‹</span> جست‌وجوی سراسری</div>
-          <GlobalSearchBar onNavigate={onNavigate} initialQuery={query} />
-          <div className="topbar__actions">
-            <ThemeToggle theme={theme} onToggle={onThemeToggle} />
-          </div>
-        </header>
-
-        <div className="dashboard-content global-search-content">
+    <>
+      <div className="dashboard-content global-search-content" id="global-search">
           <section className="page-heading global-search-heading">
             <div>
               <span className="eyebrow">جست‌وجو در تمام منابع داده</span>
@@ -382,8 +363,7 @@ export default function GlobalSearchPage({
             <span>SetadScope · جست‌وجوی یکپارچه داده‌های عمومی معاملات</span>
             <span><SearchIcon size={14} /> جست‌وجو در عنوان، شرح، شماره، سازمان و موقعیت مکانی</span>
           </footer>
-        </div>
-      </main>
+      </div>
 
       {(selectedRecord || detailLoading) && (
         <DetailModal
@@ -393,6 +373,6 @@ export default function GlobalSearchPage({
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />
       )}
-    </div>
+    </>
   );
 }
