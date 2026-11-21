@@ -1,0 +1,39 @@
+import GlobalSearchBar from "./GlobalSearchBar";
+import ThemeToggle from "./ThemeToggle";
+
+const PAGE_TITLES = {
+  auctions: "مزایده‌ها",
+  tenders: "مناقصه‌ها",
+  search: "جست‌وجوی سراسری",
+  settings: "تنظیمات سایت",
+};
+
+export default function Topbar({
+  page,
+  apiOnline,
+  theme,
+  onThemeToggle,
+  onNavigate,
+  initialQuery = "",
+}) {
+  return (
+    <header className="topbar">
+      <div className="topbar__breadcrumb">
+        SetadScope <span>‹</span> {PAGE_TITLES[page] || PAGE_TITLES.auctions}
+      </div>
+      <GlobalSearchBar onNavigate={onNavigate} initialQuery={initialQuery} />
+      <div className="topbar__actions">
+        <div
+          className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}
+          role="status"
+          aria-live="polite"
+          title={apiOnline ? "ارتباط با سرویس سرور برقرار است" : "ارتباط با سرویس سرور برقرار نیست"}
+        >
+          <span aria-hidden="true" />
+          {apiOnline ? "اتصال به سرور برقرار است" : "اتصال به سرور برقرار نیست"}
+        </div>
+        <ThemeToggle theme={theme} onToggle={onThemeToggle} />
+      </div>
+    </header>
+  );
+}
