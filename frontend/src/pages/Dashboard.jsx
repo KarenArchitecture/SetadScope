@@ -430,7 +430,7 @@ function toPersianDigits(value) {
   return new Intl.NumberFormat("fa-IR").format(value);
 }
 
-function DetailModal({ record, kind, loading, onClose }) {
+export function DetailModal({ record, kind, loading, onClose }) {
   if (!record && !loading) return null;
   const isTender = kind === "tenders";
   const fields = record
