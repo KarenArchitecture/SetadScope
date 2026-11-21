@@ -41,6 +41,8 @@ def tender_to_dict(tender: Tender, include_raw: bool = False) -> dict:
     result = {
         "id": tender.id,
         "source_tender_id": tender.source_tender_id,
+        "has_keyword_match": tender.has_keyword_match,
+        "matched_keywords": tender.matched_keywords,
         "tender_number": tender.tender_number,
         "title": tender.title,
         "type": tender.tender_type,
@@ -88,8 +90,11 @@ def filtered_tender_query(
     deadline_to: str | None = None,
     documents_deadline_from: str | None = None,
     documents_deadline_to: str | None = None,
+    matched_only: bool = False,
 ):
     query = select(Tender)
+    if matched_only:
+        query = query.where(Tender.has_keyword_match.is_(True))
     if search and search.strip():
         term = f"%{search.strip()}%"
         query = query.where(
@@ -142,6 +147,7 @@ def filtered_tender_query(
 def tender_archive_stats(db: Session) -> dict[str, int]:
     return {
         "total": db.scalar(select(func.count(Tender.id))) or 0,
+        "matched_total": db.scalar(select(func.count(Tender.id)).where(Tender.has_keyword_match.is_(True))) or 0,
         "province_count": db.scalar(
             select(func.count(func.distinct(Tender.province))).where(Tender.province.is_not(None))
         ) or 0,
@@ -198,6 +204,7 @@ def excel_safe(value):
 @router.get("/api/tenders")
 def get_tenders(
     search: str | None = None,
+    matched_only: bool = False,
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -221,6 +228,7 @@ def get_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
+        matched_only=matched_only,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -245,6 +253,7 @@ def get_tenders(
 @router.get("/api/tenders/export.xlsx")
 def export_tenders(
     search: str | None = None,
+    matched_only: bool = False,
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -265,6 +274,7 @@ def export_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
+        matched_only=matched_only,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
