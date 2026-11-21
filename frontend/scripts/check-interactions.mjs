@@ -52,3 +52,33 @@ assert.match(app, /prefers-reduced-motion:\s*reduce/);
 assert.match(settings, /onThemeToggle\(event\)/);
 
 console.log("UI interaction checks passed: advanced search, sidebar and theme reveal.");
+
+
+// Global search is available from the topbar and sidebar on every workspace page.
+const globalSearchPage = read("src/pages/GlobalSearchPage.jsx");
+const globalSearchBar = read("src/components/GlobalSearchBar.jsx");
+const sidebar = read("src/components/Sidebar.jsx");
+const api = read("src/services/api.js");
+const searchApi = read("../backend/app/search_api.py");
+assert.match(app, /pathname\.startsWith\("\/search"\)/);
+assert.match(app, /<GlobalSearchPage key=\{routeVersion\}/);
+assert.match(dashboard, /<GlobalSearchBar onNavigate=\{onNavigate\}/);
+assert.match(settings, /<GlobalSearchBar onNavigate=\{onNavigate\}/);
+assert.match(globalSearchPage, /<GlobalSearchBar onNavigate=\{onNavigate\} initialQuery=\{query\}/);
+assert.match(globalSearchBar, /Ctrl K/);
+assert.match(globalSearchBar, /onNavigate\(query \? "\/search\?q="/);
+assert.match(globalSearchBar, /event\.key\.toLowerCase\(\) === "k"/);
+assert.match(sidebar, /page: "search", path: "\/search"/);
+assert.match(api, /api\.get\("\/api\/search"/);
+assert.match(searchApi, /@router\.get\("\/api\/search"\)/);
+assert.match(searchApi, /union_all\(auction_query, tender_query\)/);
+assert.match(globalSearchPage, /kind === "all"/);
+assert.match(globalSearchPage, /kind === "auction"/);
+assert.match(globalSearchPage, /kind === "tender"/);
+assert.match(globalSearchPage, /getAuctionById/);
+assert.match(globalSearchPage, /getTenderById/);
+assert.match(listing, /key=\{item\.row_key \|\| item\.id\}/);
+assert.match(listing, /onDetails\(item\.id, item\)/);
+assert.match(globalSearchPage, /hideSearch/);
+
+console.log("Global search checks passed: all transaction types, navigation and details.");
