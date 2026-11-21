@@ -28,6 +28,7 @@ export default function ListingTable({
   sortBy,
   sortDir,
   onSort,
+  advancedSearch,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, total);
@@ -64,6 +65,8 @@ export default function ListingTable({
           جست‌وجو
         </button>
       </form>
+
+      {advancedSearch}
 
       {error && (
         <div className="error-state">
