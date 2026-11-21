@@ -33,6 +33,7 @@ import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
 import GlobalSearchBar from "../components/GlobalSearchBar";
 import JalaliDatePicker from "../components/JalaliDatePicker";
+import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
 import "../styles/redesign.css";
 
@@ -612,6 +613,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
   const lastRefreshedRun = useRef(null);
+  const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
 
   const loadPage = useCallback(async (nextPage = 1) => {
@@ -668,13 +670,36 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
         const nextState = await getCollectionStatus(kind, auctionCategory);
         if (cancelled) return;
         setCollectionState(nextState);
+        const completedRunKey = nextState.finished_at || nextState.started_at;
         if (
           nextState.status === "completed" &&
-          nextState.finished_at &&
-          lastRefreshedRun.current !== nextState.finished_at
+          completedRunKey &&
+          lastNotifiedCollectionRun.current !== completedRunKey
         ) {
-          lastRefreshedRun.current = nextState.finished_at;
-          await loadPage(1);
+          lastNotifiedCollectionRun.current = completedRunKey;
+          const stored = formatNumber(nextState.records_stored || nextState.totals?.stored || 0);
+          notifyToast(
+            "success",
+            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
+              " با موفقیت انجام شد؛ " + stored + " رکورد ذخیره شد.",
+            { duration: 5200 },
+          );
+          if (lastRefreshedRun.current !== nextState.finished_at) {
+            lastRefreshedRun.current = nextState.finished_at;
+            await loadPage(1);
+          }
+        } else if (
+          nextState.status === "failed" &&
+          completedRunKey &&
+          lastNotifiedCollectionRun.current !== completedRunKey
+        ) {
+          lastNotifiedCollectionRun.current = completedRunKey;
+          notifyToast(
+            "error",
+            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
+              " ناموفق بود. جزئیات خطا در پنل وضعیت اجرا قابل مشاهده است.",
+            { duration: 6500 },
+          );
         }
       } catch {
         if (!cancelled) setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
@@ -847,6 +872,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
     setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
     setCollectionState({ status: "idle" });
     lastRefreshedRun.current = null;
+    lastNotifiedCollectionRun.current = null;
   }
 
   function handleSearch(event) {
@@ -908,14 +934,25 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
 
   async function handleCollection() {
     setError("");
+    const collectionLabel = isTender ? "مناقصه‌ها" : selectedCategoryLabel;
+    const toastId = notifyToast(
+      "loading",
+      "در حال ارسال درخواست جمع‌آوری " + collectionLabel + "...",
+      { duration: 0 },
+    );
     try {
       const nextState = await startCollection(kind, auctionCategory);
       setCollectionState(nextState);
-    } catch (requestError) {
-      setError(
-        requestError.response?.data?.detail ||
-          ("شروع جمع‌آوری " + (isTender ? "مناقصه‌ها" : "مزایده‌ها") + " ناموفق بود."),
+      notifyToast(
+        "info",
+        "درخواست جمع‌آوری " + collectionLabel + " ثبت شد؛ نتیجه پس از پایان اجرا اعلام می‌شود.",
+        { id: toastId, duration: 4200 },
       );
+    } catch (requestError) {
+      const message = requestError.response?.data?.detail ||
+        ("شروع جمع‌آوری " + collectionLabel + " ناموفق بود.");
+      setError(message);
+      notifyToast("error", message, { id: toastId, duration: 6500 });
     }
   }
 
@@ -927,6 +964,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
       setSelectedRecord(data);
     } catch {
       setError("دریافت جزئیات آگهی ناموفق بود.");
+      notifyToast("error", "دریافت جزئیات آگهی ناموفق بود.");
     } finally {
       setDetailLoading(false);
     }
