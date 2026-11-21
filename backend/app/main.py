@@ -493,6 +493,7 @@ def auction_filter_options(
         "collection_groups": [
             {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
             {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
+            {"value": "shared", "label": "حراج مشترک ستاد"},
         ],
     }
 
@@ -612,11 +613,11 @@ def start_collection(
 
 
 # Existing route shapes remain available. Pass collection_group to select a
-# source group; omitted group values retain the historical category mapping.
+# source group; clearance defaults to the shared Central Board feed.
 @app.get("/api/collection/auctions/{category}/status")
 def get_auction_category_status(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
-    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
     db: Session = Depends(get_db),
 ):
     try:
@@ -632,7 +633,7 @@ def start_auction_category_collection(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
 ):
     try:
         group = resolve_collection_group(category, collection_group)
@@ -663,7 +664,7 @@ def start_auction_category_collection(
 
 @app.get("/api/collection/auctions/history")
 def get_auction_collection_history(
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -725,7 +726,7 @@ def start_auction_collection(
 def get_auctions(
     search: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     matched_only: bool = True,
     status: Literal["active", "archive", "all"] = "all",
     province: str | None = None,
@@ -782,7 +783,7 @@ def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     matched_only: bool = True,
     province: str | None = None,
     city: str | None = None,
