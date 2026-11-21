@@ -26,6 +26,9 @@ def emit_progress(**values: Any) -> None:
 
 def create_session() -> requests.Session:
     session = requests.Session()
+    # Ignore HTTP(S)_PROXY / ALL_PROXY environment variables for direct requests.
+    session.trust_env = False
+    session.proxies.clear()
     session.headers.update(
         {
             "User-Agent": "SetadScope/0.1 (public listing research)",
