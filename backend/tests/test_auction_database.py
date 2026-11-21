@@ -321,6 +321,18 @@ def test_global_search_combines_auctions_and_tenders_with_server_side_filters(tm
             assert all(item["record_type"] == "auction" for item in auctions.json()["items"])
             assert auctions.json()["summary"]["tenders"] == 1
 
+            categorized = client.get(
+                "/api/search",
+                params={
+                    "search": "چوب جنگلی برای آزمون جست‌وجوی سراسری",
+                    "kind": "auction",
+                    "category": "movable",
+                },
+            )
+            assert categorized.status_code == 200
+            assert categorized.json()["total"] == 1
+            assert categorized.json()["summary"]["tenders"] == 1
+
             tenders = client.get(
                 "/api/search",
                 params={"search": "چوب جنگلی برای آزمون جست‌وجوی سراسری", "source": "setad_tender"},
