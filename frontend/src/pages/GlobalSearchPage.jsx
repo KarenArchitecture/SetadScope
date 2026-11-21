@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
 import Sidebar from "../components/Sidebar";
@@ -87,8 +87,10 @@ export default function GlobalSearchPage({
   const [error, setError] = useState("");
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
+  const lastRequestId = useRef(0);
 
   const loadPage = useCallback(async (nextPage = 1) => {
+    const requestId = ++lastRequestId.current;
     setLoading(true);
     setError("");
     try {
@@ -105,15 +107,17 @@ export default function GlobalSearchPage({
         page: nextPage,
         pageSize,
       });
+      if (requestId !== lastRequestId.current) return;
       setResult(data);
       setPage(data.page);
     } catch (requestError) {
+      if (requestId !== lastRequestId.current) return;
       setError(
         requestError.response?.data?.detail ||
         "دریافت نتایج جست‌وجوی سراسری ناموفق بود. اتصال Backend را بررسی کن.",
       );
     } finally {
-      setLoading(false);
+      if (requestId === lastRequestId.current) setLoading(false);
     }
   }, [query, kind, source, category, province, status, matchedOnly, sortBy, sortDir, pageSize]);
 
