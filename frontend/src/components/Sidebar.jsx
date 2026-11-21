@@ -14,10 +14,13 @@ export default function Sidebar({ page, onNavigate, collapsed, onToggle }) {
   }
 
   return (
-    <aside className={"sidebar " + (collapsed ? "sidebar--collapsed" : "")}>
+    <aside
+      className={"sidebar " + (collapsed ? "sidebar--collapsed" : "")}
+      aria-label="ناوبری اصلی SetadScope"
+    >
       <div className="sidebar__top">
         <a className="brand" href="/auctions" onClick={(event) => go(event, "/auctions")} aria-label="SetadScope">
-          <span className="brand__mark"><Activity size={22} /></span>
+          <span className="brand__mark"><Activity size={21} strokeWidth={2.1} /></span>
           <span className="brand__name">Setad<span>Scope</span></span>
         </a>
         <button
@@ -31,7 +34,11 @@ export default function Sidebar({ page, onNavigate, collapsed, onToggle }) {
           {collapsed ? <ChevronsLeft size={18} /> : <ChevronsRight size={18} />}
         </button>
       </div>
-      <div className="sidebar__section-label">فضای کاری</div>
+
+      <div className="sidebar__section-label">
+        <span>فضای کاری</span>
+      </div>
+
       <nav className="sidebar-nav" aria-label="بخش‌های سامانه">
         {LINKS.map(({ page: id, path, title, icon: Icon }) => (
           <a
@@ -43,16 +50,25 @@ export default function Sidebar({ page, onNavigate, collapsed, onToggle }) {
             aria-label={title}
             onClick={(event) => go(event, path)}
           >
-            <Icon size={19} />
+            <span className="sidebar-nav__icon"><Icon size={19} strokeWidth={1.9} /></span>
             <span className="sidebar-nav__label">{title}</span>
           </a>
         ))}
-        <span className="sidebar-nav__item sidebar-nav__item--muted" aria-label="منابع داده، به‌زودی">
-          <Database size={19} /> <span className="sidebar-nav__label">منابع داده <small>به‌زودی</small></span>
+        <span
+          className="sidebar-nav__item sidebar-nav__item--muted"
+          aria-label="منابع داده، به‌زودی"
+          title={collapsed ? "منابع داده، به‌زودی" : undefined}
+        >
+          <span className="sidebar-nav__icon"><Database size={19} strokeWidth={1.9} /></span>
+          <span className="sidebar-nav__label">
+            منابع داده
+            <small className="sidebar-nav__soon">به‌زودی</small>
+          </span>
         </span>
       </nav>
+
       <div className="sidebar__bottom">
-        <div className="sidebar__version">SETADSCOPE · نسخه ۰.۴</div>
+        <div className="sidebar__version">SETADSCOPE <span>·</span> نسخه ۰.۴</div>
       </div>
     </aside>
   );
