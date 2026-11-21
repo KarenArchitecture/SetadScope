@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Building2, Filter, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
+import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
@@ -233,6 +233,7 @@ export default function GlobalSearchPage({
   function changeKind(nextKind) {
     if (kind === nextKind) return;
     setKind(nextKind);
+    setSource("");
     setCategory("");
     setPage(1);
   }
