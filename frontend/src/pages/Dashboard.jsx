@@ -84,6 +84,38 @@ function formatDate(value) {
   }).format(parsed);
 }
 
+function formatLastCollectionUpdate(value) {
+  if (!value) return "آخرین بروزرسانی: ثبت نشده";
+  const updatedAt = new Date(value);
+  if (Number.isNaN(updatedAt.getTime())) return "آخرین بروزرسانی: ثبت نشده";
+
+  const timeZone = "Asia/Tehran";
+  const time = new Intl.DateTimeFormat("fa-IR", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+    timeZone,
+  }).format(updatedAt);
+  const dayKey = (date) => new Intl.DateTimeFormat("en-CA", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    timeZone,
+  }).format(date);
+
+  if (dayKey(updatedAt) === dayKey(new Date())) {
+    return "آخرین بروزرسانی: " + time;
+  }
+
+  const date = new Intl.DateTimeFormat("fa-IR-u-ca-persian", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone,
+  }).format(updatedAt);
+  return "آخرین بروزرسانی: " + date + "، " + time;
+}
+
 function formatRawDate(value) {
   if (!value) return "—";
   const raw = String(value).trim();
@@ -947,16 +979,21 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
               </p>
             </div>
             <div className="page-heading__actions">
-              <button
-                className="button button--primary"
-                onClick={handleCollection}
-                disabled={collectionRunning}
-              >
-                {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                {collectionRunning
-                  ? "در حال اجرا..."
-                  : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
-              </button>
+              <div className="collection-action">
+                <button
+                  className="button button--primary"
+                  onClick={handleCollection}
+                  disabled={collectionRunning}
+                >
+                  {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
+                  {collectionRunning
+                    ? "در حال اجرا..."
+                    : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
+                </button>
+                <span className="collection-action__last-updated">
+                  {formatLastCollectionUpdate(collectionState.last_updated_at)}
+                </span>
+              </div>
               <a className="button button--secondary" href={exportHref}>
                 <ArrowDownToLine size={16} /> خروجی Excel
               </a>
