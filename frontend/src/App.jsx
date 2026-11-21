@@ -4,6 +4,9 @@ import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
 import GlobalSearchPage from "./pages/GlobalSearchPage";
 import ToastViewport from "./components/ToastViewport";
+import Sidebar from "./components/Sidebar";
+import Topbar from "./components/Topbar";
+import { getApiHealth } from "./services/api";
 
 function resolvePage() {
   if (window.location.pathname.startsWith("/search")) return "search";
@@ -37,6 +40,7 @@ export default function App() {
   const [themeTransition, setThemeTransition] = useState(null);
   const switchingRef = useRef(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => window.localStorage.getItem("setadscope-sidebar-collapsed") === "true");
+  const [apiOnline, setApiOnline] = useState(false);
 
   // Update colors before the browser paints the newly revealed frame.
   useLayoutEffect(() => {
@@ -47,6 +51,32 @@ export default function App() {
   useEffect(() => {
     window.localStorage.setItem("setadscope-sidebar-collapsed", String(sidebarCollapsed));
   }, [sidebarCollapsed]);
+
+  // One shared server-health indicator for every page in the application.
+  useEffect(() => {
+    let active = true;
+    let checking = false;
+
+    async function checkServer() {
+      if (checking) return;
+      checking = true;
+      try {
+        await getApiHealth();
+        if (active) setApiOnline(true);
+      } catch {
+        if (active) setApiOnline(false);
+      } finally {
+        checking = false;
+      }
+    }
+
+    checkServer();
+    const interval = window.setInterval(checkServer, 30000);
+    return () => {
+      active = false;
+      window.clearInterval(interval);
+    };
+  }, []);
 
   useEffect(() => {
     if (window.location.pathname === "/") {
@@ -92,13 +122,35 @@ export default function App() {
   }
 
   const onSidebarToggle = () => setSidebarCollapsed((current) => !current);
+  const initialQuery = page === "search"
+    ? new URLSearchParams(window.location.search).get("q") || ""
+    : "";
+
   return (
     <>
-      {page === "settings"
-        ? <Settings onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />
-        : page === "search"
-          ? <GlobalSearchPage key={routeVersion} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />
-          : <Dashboard key={page} kind={page} onNavigate={navigate} theme={theme} onThemeToggle={onThemeToggle} sidebarCollapsed={sidebarCollapsed} onSidebarToggle={onSidebarToggle} />}
+      <div className={"app-shell " + (sidebarCollapsed ? "app-shell--collapsed" : "")}>
+        <Sidebar
+          page={page}
+          onNavigate={navigate}
+          collapsed={sidebarCollapsed}
+          onToggle={onSidebarToggle}
+        />
+        <main className="main-content">
+          <Topbar
+            page={page}
+            apiOnline={apiOnline}
+            theme={theme}
+            onThemeToggle={onThemeToggle}
+            onNavigate={navigate}
+            initialQuery={initialQuery}
+          />
+          {page === "settings"
+            ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
+            : page === "search"
+              ? <GlobalSearchPage key={routeVersion} onNavigate={navigate} />
+              : <Dashboard key={page} kind={page} />}
+        </main>
+      </div>
       {themeTransition && (
         <ThemeTransition transition={themeTransition} onAnimationEnd={onThemeTransitionEnd} />
       )}
