@@ -60,7 +60,7 @@ export default function App() {
   }, []);
 
   function navigate(path) {
-    if (window.location.pathname !== path) window.history.pushState({}, "", path);
+    if (window.location.pathname + window.location.search !== path) window.history.pushState({}, "", path);
     setPage(resolvePage());
     setRouteVersion((current) => current + 1);
   }
