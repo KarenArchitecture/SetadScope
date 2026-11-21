@@ -225,6 +225,8 @@ function FiltersPanel({
   onToggle,
   activeCount,
   canReset,
+  matchedOnly,
+  onMatchedOnlyChange,
 }) {
   const isTender = kind === "tenders";
   const provinceOptions = options.provinces || [];
@@ -259,9 +261,20 @@ function FiltersPanel({
             <ChevronDown className={isOpen ? "filters-panel__chevron filters-panel__chevron--open" : "filters-panel__chevron"} size={17} />
           </span>
         </button>
-        <button type="button" className="filters-reset" onClick={onReset} disabled={!canReset} title="حذف تمام فیلترهای انتخابی و اعمال‌شده">
-          <RotateCcw size={14} /> حذف فیلترها
-        </button>
+        <div className="filters-panel__quick-actions">
+          <label className="filters-panel__match" htmlFor="filter-matched-only">
+            <input
+              id="filter-matched-only"
+              type="checkbox"
+              checked={matchedOnly}
+              onChange={(event) => onMatchedOnlyChange(event.target.checked)}
+            />
+            فقط آگهی‌های مرتبط با کلیدواژه‌ها
+          </label>
+          <button type="button" className="filters-reset" onClick={onReset} disabled={!canReset} title="حذف تمام فیلترهای انتخابی و اعمال‌شده">
+            <RotateCcw size={14} /> حذف فیلترها
+          </button>
+        </div>
       </header>
 
       <div className="filters-panel__collapsible" aria-hidden={!isOpen} inert={!isOpen}>
@@ -546,7 +559,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
   const [filterDraft, setFilterDraft] = useState({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length;
+  const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length + Number(matchedOnly);
   const canResetFilters = activeFilterCount > 0 || Object.values(filterDraft).some((value) => value !== "");
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
@@ -838,6 +851,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
   function handleResetFilters() {
     setFilterDraft({ ...EMPTY_FILTERS });
     setAppliedFilters({ ...EMPTY_FILTERS });
+    setMatchedOnly(false);
     setError("");
     setPage(1);
   }
@@ -947,8 +961,9 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
             </div>
           </section>
 
-          <section className="auction-category-nav" aria-label="فیلتر ارتباط با کلیدواژه‌ها">
-              {!isTender && <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
+          {!isTender && (
+            <nav className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
+              <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
                 {AUCTION_CATEGORIES.map(({ key, label }) => (
                   <button
                     key={key}
@@ -961,16 +976,9 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
                     {label}
                   </button>
                 ))}
-              </div>}
-              <label className="auction-category-nav__match">
-                <input
-                  type="checkbox"
-                  checked={matchedOnly}
-                  onChange={(event) => { setMatchedOnly(event.target.checked); setPage(1); }}
-                />
-                فقط آگهی‌های مرتبط با کلیدواژه‌ها
-              </label>
-          </section>
+              </div>
+            </nav>
+          )}
           {!isTender && auctionCategory === "clearance" && (
             <div className="auction-category-note">
               حراج: فعلاً فقط آگهی‌های سازمان جمع‌آوری و فروش اموال تملیکی (شناسه ۵۳۱۵)
@@ -1012,19 +1020,6 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
             />
           </section>
 
-          <FiltersPanel
-            kind={kind}
-            filters={filterDraft}
-            options={result.filter_options || {}}
-            onChange={handleFilterChange}
-            onApply={handleApplyFilters}
-            onReset={handleResetFilters}
-            isOpen={filtersOpen}
-            onToggle={() => setFiltersOpen((current) => !current)}
-            activeCount={activeFilterCount}
-            canReset={canResetFilters}
-          />
-
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
             title={isTender ? "فهرست مناقصه‌ها" : "فهرست مزایده‌های " + selectedCategoryLabel}
@@ -1050,6 +1045,22 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={handleSort}
+            advancedSearch={
+              <FiltersPanel
+                kind={kind}
+                filters={filterDraft}
+                options={result.filter_options || {}}
+                onChange={handleFilterChange}
+                onApply={handleApplyFilters}
+                onReset={handleResetFilters}
+                isOpen={filtersOpen}
+                onToggle={() => setFiltersOpen((current) => !current)}
+                activeCount={activeFilterCount}
+                canReset={canResetFilters}
+                matchedOnly={matchedOnly}
+                onMatchedOnlyChange={(checked) => { setMatchedOnly(checked); setPage(1); }}
+              />
+            }
           />
 
           <footer className="dashboard-footer">
