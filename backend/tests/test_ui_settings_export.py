@@ -27,7 +27,29 @@ def test_excel_table_filters_and_numeric_cells():
     assert sheet["A2"].data_type == "s"
     assert sheet["C2"].data_type == "n"
     assert sheet["C2"].value == 190000.5
-    assert sheet.column_dimensions["B"].width == 45
+    # Width follows actual content instead of the configured maximum (45).
+    assert 12 <= sheet.column_dimensions["B"].width < 45
+    assert sheet["A1"].font.name == "Calibri"
+    assert sheet["A1"].font.sz == 13
+    assert sheet["A1"].font.bold is True
+    assert sheet["B2"].font.name == "Calibri"
+    assert sheet["B2"].font.sz == 12
+    assert sheet["B2"].font.bold is True
+    assert sheet["B2"].alignment.wrap_text is True
+
+
+def test_long_descriptions_wrap_with_bounded_column_width():
+    data = build_excel(
+        "مزایده‌ها",
+        "LongDescription",
+        ["شناسه", "شرح"],
+        [["00012", "آگهی فروش چوب با شرایط مزایده و مشخصات تفصیلی " * 7]],
+        [22, 48],
+    )
+    sheet = load_workbook(data).active
+    assert sheet.column_dimensions["B"].width == 48
+    assert 30 < sheet.row_dimensions[2].height <= 84
+    assert sheet.tables["LongDescription"].ref == "A1:B2"
 
 
 def test_empty_excel_still_has_filterable_headers():
