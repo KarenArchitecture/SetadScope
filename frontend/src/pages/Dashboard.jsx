@@ -31,6 +31,7 @@ import {
 import ListingTable from "../components/ListingTable";
 import Sidebar from "../components/Sidebar";
 import ThemeToggle from "../components/ThemeToggle";
+import GlobalSearchBar from "../components/GlobalSearchBar";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import "./Dashboard.css";
 import "../styles/redesign.css";
@@ -915,6 +916,7 @@ export default function Dashboard({ kind, onNavigate, theme, onThemeToggle, side
           <div className="topbar__breadcrumb">
             SetadScope <span>‹</span> {isTender ? "مناقصه‌ها" : "مزایده‌ها"}
           </div>
+          <GlobalSearchBar onNavigate={onNavigate} />
           <div className="topbar__actions">
             <div className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}>
               <span /> {apiOnline ? "اتصال به Backend برقرار است" : "در انتظار اتصال به Backend"}
