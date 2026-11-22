@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownToLine,
   ChevronDown,
   Building2,
   CalendarDays,
@@ -26,6 +25,7 @@ import {
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
+import ExcelExportButton from "../components/ExcelExportButton";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
@@ -58,6 +58,7 @@ const ACTIVE_STATES = new Set(["collecting", "importing"]);
 const EMPTY_FILTERS = {
   province: "",
   city: "",
+  status: "all",
   state: "",
   type_name: "",
   announcement_from: "",
@@ -163,7 +164,17 @@ function remainingTime(value) {
   return formatNumber(hours) + " ساعت و " + formatNumber(minutes) + " دقیقه";
 }
 
-function StatCard({ icon: Icon, label, value, hint, archiveValue, tone = "blue" }) {
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  archiveValue,
+  pageLabel = "در صفحه جاری",
+  tone = "blue",
+}) {
+  const archiveCount = archiveValue === undefined ? value : archiveValue;
+
   return (
     <article className="stat-card">
       <div className={"stat-card__icon stat-card__icon--" + tone}>
@@ -171,19 +182,17 @@ function StatCard({ icon: Icon, label, value, hint, archiveValue, tone = "blue" 
       </div>
       <div className="stat-card__content">
         <span className="stat-card__label">{label}</span>
-        <strong className="stat-card__value">{formatNumber(value)}</strong>
+        <strong className="stat-card__value">{formatNumber(archiveCount)}</strong>
         <span className="stat-card__hint">{hint}</span>
-        {archiveValue !== undefined && (
-          <span className="stat-card__archive">
-            کل آرشیو: {formatNumber(archiveValue)}
-          </span>
-        )}
+        <span className="stat-card__page-count">
+          {pageLabel}: {formatNumber(value)}
+        </span>
       </div>
     </article>
   );
 }
 
-function CollectionProgress({ state, kind }) {
+function CollectionProgress({ state, kind, onDismiss }) {
   if (!state || state.status === "idle") return null;
 
   const isTender = kind === "tenders";
@@ -205,6 +214,17 @@ function CollectionProgress({ state, kind }) {
           <strong>{statusLabel}</strong>
         </div>
         <span className="collection-progress__percent">{formatNumber(percent)}٪</span>
+        {state.status === "completed" && percent >= 100 && (
+          <button
+            type="button"
+            className="collection-progress__dismiss"
+            onClick={onDismiss}
+            aria-label="بستن وضعیت جمع‌آوری"
+            title="بستن"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       <div
         className="collection-progress__track"
@@ -302,7 +322,7 @@ function FiltersPanel({
               <small>
                 {activeCount
                   ? toPersianDigits(activeCount) + " فیلتر فعال"
-                  : "استان، شهر، وضعیت و بازه‌های زمانی"}
+                  : "استان، شهر، وضعیت مهلت و بازه‌های زمانی"}
               </small>
             </span>
           </span>
@@ -346,6 +366,14 @@ function FiltersPanel({
                 >
                   <option value="">{filters.province ? "همه شهرهای استان" : "ابتدا استان را انتخاب کنید"}</option>
                   {cityOptions.map((value) => <option key={value} value={value}>{value}</option>)}
+                </select>
+              </FilterField>
+
+              <FilterField label="وضعیت مهلت">
+                <select value={filters.status || "all"} onChange={(event) => onChange("status", event.target.value)}>
+                  <option value="all">همه مهلت‌ها</option>
+                  <option value="active">دارای مهلت</option>
+                  <option value="archive">مهلت تمام‌شده</option>
                 </select>
               </FilterField>
 
@@ -622,8 +650,9 @@ export default function Dashboard({ kind }) {
   const [filterDraft, setFilterDraft] = useState({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length + Number(matchedOnly);
-  const canResetFilters = activeFilterCount > 0 || Object.values(filterDraft).some((value) => value !== "");
+  const isActiveFilter = ([key, value]) => value !== "" && !(key === "status" && value === "all");
+  const activeFilterCount = Object.entries(appliedFilters).filter(isActiveFilter).length + Number(matchedOnly);
+  const canResetFilters = activeFilterCount > 0 || Object.entries(filterDraft).some(isActiveFilter);
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
@@ -633,6 +662,7 @@ export default function Dashboard({ kind }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
+  const [collectionProgressDismissed, setCollectionProgressDismissed] = useState(false);
   const lastRefreshedRun = useRef(null);
   const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
@@ -891,6 +921,7 @@ export default function Dashboard({ kind }) {
     setFiltersOpen(false);
     setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
     setCollectionState({ status: "idle" });
+    setCollectionProgressDismissed(false);
     lastRefreshedRun.current = null;
     lastNotifiedCollectionRun.current = null;
   }
@@ -910,6 +941,7 @@ export default function Dashboard({ kind }) {
     setFiltersOpen(false);
     setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
     setCollectionState({ status: "idle" });
+    setCollectionProgressDismissed(false);
     setError("");
     lastRefreshedRun.current = null;
     lastNotifiedCollectionRun.current = null;
@@ -974,6 +1006,7 @@ export default function Dashboard({ kind }) {
 
   async function handleCollection() {
     setError("");
+    setCollectionProgressDismissed(false);
     const collectionLabel = isTender ? "مناقصه‌ها" : selectedCategoryLabel;
     const toastId = notifyToast(
       "loading",
@@ -1068,9 +1101,6 @@ export default function Dashboard({ kind }) {
                 >
                   {formatLastCollectionUpdate(collectionState.last_updated_at)}
                 </span>
-                <a className="button button--secondary collection-action-card__export" href={exportHref}>
-                  <ArrowDownToLine size={16} /> خروجی Excel
-                </a>
               </section>
             </div>
           </section>
@@ -1119,37 +1149,44 @@ export default function Dashboard({ kind }) {
               این حراج از تابلوی مرکزی ستاد دریافت می‌شود و برای هر دو مجموعه مشترک است؛ اطلاعات آن فقط یک‌بار جمع‌آوری و ذخیره می‌شود.
             </div>
           )}
-          <CollectionProgress state={collectionState} kind={kind} />
+          {!collectionProgressDismissed && (
+            <CollectionProgress
+              state={collectionState}
+              kind={kind}
+              onDismiss={() => setCollectionProgressDismissed(true)}
+            />
+          )}
 
           <section className="stats-grid">
             <StatCard
               icon={isTender ? FileText : Gavel}
-              label="رکورد در نتایج"
+              label="رکورد در کل آرشیو"
               value={result.total}
-              hint={matchedOnly ? "فقط آگهی‌های مرتبط" : isTender ? "رکوردهای منطبق با فیلتر فعلی" : "همه آگهی‌های دسته انتخاب‌شده"}
+              pageLabel="نتایج با فیلتر فعلی"
+              hint={isTender ? "مجموع تمام مناقصه‌های ذخیره‌شده" : "مجموع آگهی‌های ذخیره‌شده در دسته و مجموعه انتخاب‌شده"}
               archiveValue={archiveStats.total}
             />
             <StatCard
               icon={MapPin}
-              label="استان در این صفحه"
+              label="استان در کل آرشیو"
               value={provinceCount}
-              hint="تعداد استان‌های متمایز در صفحه جاری"
+              hint="تعداد استان‌های متمایز در آرشیو"
               archiveValue={archiveStats.province_count}
               tone="violet"
             />
             <StatCard
               icon={Building2}
-              label="سازمان در این صفحه"
+              label="سازمان در کل آرشیو"
               value={organizationCount}
-              hint="تعداد سازمان‌های متمایز در صفحه جاری"
+              hint="تعداد سازمان‌های متمایز در آرشیو"
               archiveValue={archiveStats.organization_count}
               tone="teal"
             />
             <StatCard
               icon={CheckCircle2}
-              label={isTender ? "نوع فراخوان در این صفحه" : auctionCategory === "clearance" ? "مرتبط در این صفحه" : "منتشرشده در این صفحه"}
+              label={isTender ? "نوع فراخوان در کل آرشیو" : auctionCategory === "clearance" ? "آگهی مرتبط در کل آرشیو" : "آگهی منتشرشده در کل آرشیو"}
               value={fourthStat}
-              hint={isTender ? "تعداد انواع فراخوان متمایز" : auctionCategory === "clearance" ? "طبق کلیدواژه‌ها" : "تعداد آگهی‌های منتشرشده"}
+              hint={isTender ? "تعداد انواع فراخوان متمایز در آرشیو" : auctionCategory === "clearance" ? "تعداد آگهی‌های منطبق با کلیدواژه‌ها" : "تعداد آگهی‌های منتشرشده در آرشیو"}
               archiveValue={isTender ? archiveStats.type_count : auctionCategory === "clearance" ? archiveStats.matched_total : archiveStats.published_count}
               tone="amber"
             />
@@ -1180,6 +1217,12 @@ export default function Dashboard({ kind }) {
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={handleSort}
+            headerActions={
+              <ExcelExportButton
+                href={exportHref}
+                filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
+              />
+            }
             advancedSearch={
               <FiltersPanel
                 kind={kind}
