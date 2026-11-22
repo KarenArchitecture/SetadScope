@@ -9,6 +9,7 @@ mismatched legacy rows for audit, then remove them from the live auction feed.
 """
 from alembic import op
 import sqlalchemy as sa
+from sqlalchemy.dialects import postgresql
 
 revision = "0011"
 down_revision = "0010"
@@ -22,7 +23,7 @@ def upgrade():
         sa.Column("id", sa.BigInteger(), primary_key=True, autoincrement=True),
         sa.Column("original_auction_id", sa.BigInteger(), nullable=False, unique=True),
         sa.Column("reason", sa.Text(), nullable=False),
-        sa.Column("row_data", sa.dialects.postgresql.JSONB(), nullable=False),
+        sa.Column("row_data", postgresql.JSONB(), nullable=False),
         sa.Column(
             "quarantined_at",
             sa.DateTime(timezone=True),
@@ -30,22 +31,6 @@ def upgrade():
             server_default=sa.func.now(),
         ),
     )
-
-    # Keep this extraction in sync with fetch_auction_categories._record_auctioneer_id.
-    auctioneer_id = sa.text("""
-        CASE
-            WHEN category = 'movable'
-                THEN raw_payload #>> '{auctionParty,auction,auctioneer,id}'
-            WHEN category IN ('immovable', 'rental')
-                THEN COALESCE(
-                    raw_payload #>> '{auction,auctioneer,id}',
-                    raw_payload #>> '{immovableAuction,auctioneer,id}'
-                )
-            WHEN category = 'minor'
-                THEN raw_payload #>> '{auctioneer,id}'
-            ELSE NULL
-        END
-    """)
 
     op.execute(sa.text("""
         INSERT INTO auction_quarantine (original_auction_id, reason, row_data)
