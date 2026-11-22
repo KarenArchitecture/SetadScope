@@ -169,3 +169,15 @@
 @media (prefers-reduced-motion: reduce) {
   .global-search-tabs button { transition: none; }
 }
+
+
+.global-search-total small {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.global-search-filterbar select:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
