@@ -1,0 +1,85 @@
+.excel-export {
+  min-width: 170px;
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+}
+
+.excel-export__button {
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.excel-export__progress {
+  width: min(100%, 240px);
+  display: grid;
+  gap: 5px;
+}
+
+.excel-export__progress-copy {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-muted);
+  font-size: 10px;
+}
+
+.excel-export__progress-copy strong {
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.excel-export__track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--surface-hover);
+}
+
+.excel-export__fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent);
+  transition: width .2s ease;
+}
+
+.excel-export__fill--indeterminate {
+  width: 36%;
+  animation: excel-export-indeterminate 1.15s ease-in-out infinite alternate;
+}
+
+.excel-export__error {
+  max-width: 240px;
+  color: #c45b5b;
+  font-size: 10px;
+  line-height: 1.6;
+}
+
+@keyframes excel-export-indeterminate {
+  from { transform: translateX(0); }
+  to { transform: translateX(175%); }
+}
+
+@media (max-width: 720px) {
+  .excel-export {
+    width: 100%;
+    justify-items: stretch;
+  }
+
+  .excel-export__button {
+    justify-content: center;
+  }
+
+  .excel-export__progress {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .excel-export__fill--indeterminate {
+    animation: none;
+    width: 70%;
+  }
+}
