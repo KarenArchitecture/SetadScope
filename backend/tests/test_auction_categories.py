@@ -244,6 +244,82 @@ def test_amval_manifest_is_scoped_even_when_endpoint_and_payload_shape_are_share
     assert manifest["collection_group"] == "amval_tamliki"
 
 
+def test_eauc_groups_use_distinct_gateway_contexts_and_amval_identity_guard():
+    from setad_scope.collectors.auction_sources.registry import source_for
+    from setad_scope.collectors.fetch_auction_categories import (
+        SourceContextMismatch,
+        validate_source_context,
+    )
+
+    categories = ("movable", "immovable", "rental", "minor")
+    for category in categories:
+        executive = source_for(category, "executive_agencies")
+        amval = source_for(category, "amval_tamliki")
+        assert executive.path == amval.path
+        assert executive.landing_url.endswith("gateway=setad")
+        assert amval.landing_url.endswith("gateway=amvalTamliki")
+        assert executive.expected_auctioneer_id is None
+        assert amval.expected_auctioneer_id == "2"
+
+    amval = source_for("movable", "amval_tamliki")
+    valid_row = {
+        "auctionParty": {
+            "auction": {"auctioneer": {"id": 2, "name": "سازمان جمع آوری و فروش اموال تملیکی"}}
+        }
+    }
+    wrong_collection_row = {
+        "auctionParty": {
+            "auction": {"auctioneer": {"id": 43, "name": "بانک مسکن"}}
+        }
+    }
+
+    validate_source_context([valid_row], amval)
+    with pytest.raises(SourceContextMismatch, match="expected auctioneer.id=2"):
+        validate_source_context([wrong_collection_row], amval)
+
+
+def test_create_session_bootstraps_the_selected_eauc_gateway(monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    sessions = []
+
+    class FakeResponse:
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.headers = {}
+            self.proxies = {}
+            self.trust_env = True
+            self.visited_urls = []
+            sessions.append(self)
+
+        def get(self, url, timeout):
+            self.visited_urls.append(url)
+            return FakeResponse(url)
+
+    monkeypatch.setattr(module.requests, "Session", FakeSession)
+
+    executive = module.create_session("movable", "executive_agencies")
+    amval = module.create_session("movable", "amval_tamliki")
+
+    assert sessions[0] is executive
+    assert sessions[1] is amval
+    assert executive.visited_urls == [
+        "https://eauc.setadiran.ir/eauc/welcome.action?gateway=setad"
+    ]
+    assert amval.visited_urls == [
+        "https://eauc.setadiran.ir/eauc/welcome.action?gateway=amvalTamliki"
+    ]
+    assert executive.headers["Referer"].endswith("gateway=setad")
+    assert amval.headers["Referer"].endswith("gateway=amvalTamliki")
+    assert executive.trust_env is False and amval.trust_env is False
+
+
 def test_auction_collector_ignores_environment_proxy_settings():
     from setad_scope.collectors import fetch_auction_categories as module
 

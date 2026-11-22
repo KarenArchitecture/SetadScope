@@ -93,6 +93,65 @@ def request_details(
     return url, params
 
 
+class SourceContextMismatch(RuntimeError):
+    """Raised when EAUC returns records from a different owning collection."""
+
+
+def _record_auctioneer_id(record: dict, category: str):
+    if category == "movable":
+        party = record.get("auctionParty")
+        party = party if isinstance(party, dict) else {}
+        auction = party.get("auction")
+    elif category == "minor":
+        auction = record
+    else:
+        auction = record.get("auction") or record.get("immovableAuction")
+
+    auction = auction if isinstance(auction, dict) else {}
+    auctioneer = auction.get("auctioneer")
+    auctioneer = auctioneer if isinstance(auctioneer, dict) else {}
+    return auctioneer.get("id")
+
+
+def validate_source_context(rows: list[dict], source) -> None:
+    """Reject a snapshot if EAUC's session context returned another organization."""
+    expected_id = source.expected_auctioneer_id
+    if expected_id is None or not rows:
+        return
+
+    observed_ids = []
+    mismatches = []
+    for row_number, record in enumerate(rows, start=1):
+        if not isinstance(record, dict):
+            continue
+        actual_id = _record_auctioneer_id(record, source.category)
+        if actual_id is None:
+            continue
+        actual_id = str(actual_id)
+        observed_ids.append(actual_id)
+        if actual_id != str(expected_id):
+            mismatches.append((row_number, actual_id))
+
+    if mismatches:
+        examples = ", ".join(
+            f"row {row_number}: auctioneer.id={actual_id}"
+            for row_number, actual_id in mismatches[:5]
+        )
+        unexpected_ids = ", ".join(sorted({actual_id for _, actual_id in mismatches}))
+        raise SourceContextMismatch(
+            f"EAUC source context mismatch for {source.collection_group}/{source.category}: "
+            f"expected auctioneer.id={expected_id}, received {unexpected_ids} ({examples}). "
+            "The response was rejected to prevent cross-collection data contamination."
+        )
+
+    if not observed_ids:
+        raise SourceContextMismatch(
+            f"Cannot verify EAUC source context for {source.collection_group}/{source.category}: "
+            f"no auctioneer.id was present; expected {expected_id}. "
+            "The response was rejected rather than stored under an unverified collection."
+        )
+
+
 def fetch_page(
     session: requests.Session,
     category: str,
@@ -108,7 +167,8 @@ def fetch_page(
             response = session.get(url, params=params, timeout=(20, 90))
             response.raise_for_status()
             payload = response.json()
-            extract_rows(payload, source.adapter)
+            rows = extract_rows(payload, source.adapter)
+            validate_source_context(rows, source)
             return payload
         except (requests.RequestException, ValueError) as exc:
             last_error = exc

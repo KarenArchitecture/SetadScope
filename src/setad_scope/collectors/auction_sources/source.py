@@ -14,12 +14,17 @@ class AuctionSource:
     default_rows: int = 30
     landing_url: str | None = None
     referer: str | None = None
+    expected_auctioneer_id: str | None = None
     fixed_params: tuple[tuple[str, str], ...] = ()
 
 
 def build_eauc_sources(collection_group: str) -> dict[str, AuctionSource]:
     base_url = "https://eauc.setadiran.ir"
-    landing_url = base_url + "/eauc/welcome.action?gateway=setad"
+    # EAUC uses the same listing endpoints for different owning collections,
+    # but the gateway selected during session bootstrap determines the dataset.
+    gateway = "amvalTamliki" if collection_group == "amval_tamliki" else "setad"
+    landing_url = f"{base_url}/eauc/welcome.action?gateway={gateway}"
+    expected_auctioneer_id = "2" if collection_group == "amval_tamliki" else None
     routes = {
         "movable": ("/eauc/mainEstate-Load.action", "setad_main_estate", ()),
         "immovable": (
@@ -40,6 +45,7 @@ def build_eauc_sources(collection_group: str) -> dict[str, AuctionSource]:
             path=path,
             default_rows=30,
             landing_url=landing_url,
+            expected_auctioneer_id=expected_auctioneer_id,
             fixed_params=params,
         )
         for category, (path, source, params) in routes.items()

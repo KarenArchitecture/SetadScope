@@ -20,7 +20,9 @@ SetadScope separates an auction's owning collection from its auction category.
 | amval_tamliki | minor | EAUC | `/eauc/mainMinor-Load.action` |
 | shared | clearance | Central Board | `/api/centralboard/cards/` |
 
-The four EAUC endpoints use the same response adapter and pagination contract in both owning collections. Their collection jobs, raw snapshots, ingestion runs, and database identities remain independent.
+The four EAUC endpoints use the same response adapter and pagination contract in both owning collections, but they do **not** share the same initial session context. The executive-agency collector bootstraps its session with `gateway=setad`; the Amval collector must bootstrap with `gateway=amvalTamliki`. EAUC then serves different datasets through the same `mainEstate`, `mainImmovable`, `mainRental`, and `mainMinor` request paths.
+
+For the Amval context, every non-empty EAUC page is checked against the known owning organization identity `auctioneer.id=2`. A page that contains another organization's ID, or contains no verifiable auctioneer identity, is rejected before it can be written to a completed raw snapshot or imported into PostgreSQL. This prevents a session-context regression from silently copying executive-agency records into the Amval collection. The two groups still share the same response adapter and pagination contract, while their session bootstrap, raw snapshots, ingestion runs, and database identities remain independent.
 
 The Central Board clearance feed is different: the two observed UI contexts use the same request URL and parameters:
 `tagCode=341,343`, `boardCode=3`, `searchTypeCode=0`, `isLogin=false`, `userRole=0`, `queryText=`, and `sort=score,desc`. It is therefore registered once as `collection_group=shared`, with one collector, one progress state, one ingestion history, and one stored copy of each card. The request does not use `selectedOrganization=5315`.
