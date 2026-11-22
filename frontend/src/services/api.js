@@ -92,6 +92,16 @@ export async function getCollectionStatus(
 }
 
 
+export async function startGlobalCollection() {
+  const response = await api.post("/api/collection/global/run");
+  return response.data;
+}
+
+export async function getGlobalCollectionStatus() {
+  const response = await api.get("/api/collection/global/status");
+  return response.data;
+}
+
 export async function getKeywords() {
   const response = await api.get("/api/settings/keywords");
   return response.data;
