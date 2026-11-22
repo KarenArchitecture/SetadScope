@@ -59,7 +59,7 @@
 
 @keyframes excel-export-indeterminate {
   from { transform: translateX(0); }
-  to { transform: translateX(175%); }
+  to { transform: translateX(-175%); }
 }
 
 @media (max-width: 720px) {
