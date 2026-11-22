@@ -5,8 +5,8 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
-from sqlalchemy import or_
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import cast, or_
+from sqlalchemy.dialects.postgresql import JSONB, insert
 from sqlalchemy.orm import Session
 
 from app.db.models import Auction, IngestionRun
@@ -269,7 +269,13 @@ def import_auction_pages(
                     if key not in identity_fields
                 }
                 changed_conditions = [
-                    getattr(Auction, key).is_distinct_from(getattr(stmt.excluded, key))
+                    (
+                        cast(Auction.matched_keywords, JSONB).is_distinct_from(
+                            cast(stmt.excluded.matched_keywords, JSONB)
+                        )
+                        if key == "matched_keywords"
+                        else getattr(Auction, key).is_distinct_from(getattr(stmt.excluded, key))
+                    )
                     for key in item
                     if key not in identity_fields
                 ]
