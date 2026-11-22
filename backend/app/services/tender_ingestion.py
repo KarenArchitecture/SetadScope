@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -86,6 +87,8 @@ def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) 
         "fetched": 0,
         "matched": 0,
         "stored": 0,
+        "changed": 0,
+        "unchanged": 0,
         "skipped_missing_id": 0,
         "skipped_invalid_record": 0,
     }
@@ -119,19 +122,28 @@ def import_tender_pages(db: Session, paths: list[Path], progress_callback=None) 
                     totals["matched"] += 1
 
                 statement = insert(Tender).values(**item)
+                identity_fields = {"source", "source_tender_id"}
                 update_values = {
                     key: getattr(statement.excluded, key)
                     for key in item
-                    if key not in {"source", "source_tender_id", "raw_payload"}
+                    if key not in identity_fields
                 }
-                update_values["raw_payload"] = statement.excluded.raw_payload
-                update_values["updated_at"] = datetime.now(timezone.utc)
+                changed_conditions = [
+                    getattr(Tender, key).is_distinct_from(getattr(statement.excluded, key))
+                    for key in item
+                    if key not in identity_fields
+                ]
                 statement = statement.on_conflict_do_update(
                     constraint="uq_tenders_source_tender",
-                    set_=update_values,
-                )
-                db.execute(statement)
+                    set_={**update_values, "updated_at": datetime.now(timezone.utc)},
+                    where=or_(*changed_conditions),
+                ).returning(Tender.id)
+                changed_id = db.execute(statement).scalar_one_or_none()
                 totals["stored"] += 1
+                if changed_id is None:
+                    totals["unchanged"] += 1
+                else:
+                    totals["changed"] += 1
 
             db.commit()
             if progress_callback:
