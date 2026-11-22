@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
+import ExcelExportButton from "../components/ExcelExportButton";
 import { notifyToast } from "../utils/toast";
 import { DetailModal } from "./Dashboard";
 import { getAuctionById, getGlobalSearch, getTenderById } from "../services/api";
@@ -59,8 +60,7 @@ export default function GlobalSearchPage() {
   const initialQuery = new URLSearchParams(window.location.search).get("q") || "";
   const [query] = useState(initialQuery);
   const [kind, setKind] = useState("all");
-  const [source, setSource] = useState("");
-  const [category, setCategory] = useState("");
+  const [collectionGroup, setCollectionGroup] = useState("");
   const [province, setProvince] = useState("");
   const [status, setStatus] = useState("all");
   const [matchedOnly, setMatchedOnly] = useState(false);
@@ -73,7 +73,8 @@ export default function GlobalSearchPage() {
     total: 0,
     pages: 0,
     summary: { all: 0, auctions: 0, tenders: 0 },
-    filter_options: { sources: [], provinces: [], categories: [] },
+    archive_summary: { all: 0, auctions: 0, tenders: 0 },
+    filter_options: { collection_groups: [], provinces: [] },
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -90,8 +91,7 @@ export default function GlobalSearchPage() {
       const data = await getGlobalSearch({
         search: query,
         kind,
-        source,
-        ...(kind === "auction" ? { category } : {}),
+        collection_group: collectionGroup || "all",
         province,
         status,
         matched_only: matchedOnly,
@@ -112,7 +112,7 @@ export default function GlobalSearchPage() {
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
     }
-  }, [query, kind, source, category, province, status, matchedOnly, sortBy, sortDir, pageSize]);
+  }, [query, kind, collectionGroup, province, status, matchedOnly, sortBy, sortDir, pageSize]);
 
   useEffect(() => {
     loadPage(1);
@@ -232,8 +232,7 @@ export default function GlobalSearchPage() {
   function changeKind(nextKind) {
     if (kind === nextKind) return;
     setKind(nextKind);
-    setSource("");
-    setCategory("");
+    if (nextKind === "tender") setCollectionGroup("");
     setPage(1);
   }
 
@@ -248,8 +247,7 @@ export default function GlobalSearchPage() {
   }
 
   function resetFilters() {
-    setSource("");
-    setCategory("");
+    setCollectionGroup("");
     setProvince("");
     setStatus("all");
     setMatchedOnly(false);
@@ -257,13 +255,22 @@ export default function GlobalSearchPage() {
   }
 
   const summary = result.summary || { all: 0, auctions: 0, tenders: 0 };
-  const options = result.filter_options || { sources: [], provinces: [], categories: [] };
-  const sourceOptions = (options.sources || []).filter((item) => (
-    kind === "all" ||
-    (kind === "auction" && item.value !== "setad_tender") ||
-    (kind === "tender" && item.value === "setad_tender")
-  ));
-  const canReset = Boolean(source || category || province || status !== "all" || matchedOnly);
+  const archiveSummary = result.archive_summary || { all: 0, auctions: 0, tenders: 0 };
+  const options = result.filter_options || { collection_groups: [], provinces: [] };
+  const collectionOptions = (options.collection_groups || []).filter((item) => item.value !== "shared");
+  const canReset = Boolean(collectionGroup || province || status !== "all" || matchedOnly);
+
+  const exportParams = new URLSearchParams({
+    search: query,
+    kind,
+    collection_group: collectionGroup || "all",
+    province,
+    status,
+    matched_only: String(matchedOnly),
+    sort_by: sortBy,
+    sort_dir: sortDir,
+  });
+  const exportHref = "/api/search/export.xlsx?" + exportParams.toString();
 
   return (
     <>
@@ -279,8 +286,9 @@ export default function GlobalSearchPage() {
               </p>
             </div>
             <div className="global-search-total">
-              <strong>{formatNumber(result.total)}</strong>
-              <span>نتیجه در نمای انتخاب‌شده</span>
+              <strong>{formatNumber(archiveSummary.all)}</strong>
+              <span>رکورد در کل آرشیو</span>
+              <small>نتیجه در نمای فعلی: {formatNumber(result.total)}</small>
             </div>
           </section>
 
@@ -298,21 +306,20 @@ export default function GlobalSearchPage() {
 
           <section className="global-search-filterbar" aria-label="فیلتر نتایج جست‌وجو">
             <label>
-              <span>منبع آگهی</span>
-              <select value={source} onChange={(event) => { setSource(event.target.value); setPage(1); }}>
-                <option value="">همه منابع</option>
-                {sourceOptions.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
+              <span>مجموعه آگهی</span>
+              <select
+                value={collectionGroup}
+                disabled={kind === "tender"}
+                onChange={(event) => { setCollectionGroup(event.target.value); setPage(1); }}
+              >
+                <option value="">
+                  {kind === "tender" ? "برای مناقصه کاربرد ندارد" : "همه مجموعه‌ها"}
+                </option>
+                {collectionOptions.map((item) => (
+                  <option key={item.value} value={item.value}>{item.label}</option>
+                ))}
               </select>
             </label>
-            {kind === "auction" && (
-              <label>
-                <span>دسته مزایده</span>
-                <select value={category} onChange={(event) => { setCategory(event.target.value); setPage(1); }}>
-                  <option value="">همه دسته‌ها</option>
-                  {(options.categories || []).map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-                </select>
-              </label>
-            )}
             <label>
               <span>استان</span>
               <select value={province} onChange={(event) => { setProvince(event.target.value); setPage(1); }}>
@@ -356,6 +363,12 @@ export default function GlobalSearchPage() {
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={changeSort}
+            headerActions={
+              <ExcelExportButton
+                href={exportHref}
+                filename="setadscope_global.xlsx"
+              />
+            }
             hideSearch
           />
 
