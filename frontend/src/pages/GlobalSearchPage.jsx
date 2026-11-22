@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
 import ExcelExportButton from "../components/ExcelExportButton";
+import DeadlineStatusSelect from "../components/DeadlineStatusSelect";
 import { notifyToast } from "../utils/toast";
 import { DetailModal } from "./Dashboard";
 import { getAuctionById, getGlobalSearch, getTenderById } from "../services/api";
@@ -329,11 +330,10 @@ export default function GlobalSearchPage() {
             </label>
             <label>
               <span>وضعیت مهلت</span>
-              <select value={status} onChange={(event) => { setStatus(event.target.value); setPage(1); }}>
-                <option value="all">همه وضعیت‌ها</option>
-                <option value="active">دارای مهلت</option>
-                <option value="archive">مهلت تمام‌شده</option>
-              </select>
+              <DeadlineStatusSelect
+                value={status}
+                onChange={(value) => { setStatus(value); setPage(1); }}
+              />
             </label>
             <label className="global-search-match">
               <input type="checkbox" checked={matchedOnly} onChange={(event) => { setMatchedOnly(event.target.checked); setPage(1); }} />
