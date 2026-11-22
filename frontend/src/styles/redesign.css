@@ -781,10 +781,10 @@ html[data-theme="dark"] .collection-progress--failed .collection-progress__fill 
 }
 .collection-action-card {
   display: grid;
-  grid-template-rows: 40px 18px 40px;
+  grid-template-rows: 40px 18px;
   gap: 7px;
   width: 238px;
-  min-height: 132px;
+  min-height: 88px;
   padding: 10px;
   border: 1px solid var(--border);
   border-radius: 13px;
