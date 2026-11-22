@@ -663,6 +663,7 @@ export default function Dashboard({ kind }) {
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
   const [collectionProgressDismissed, setCollectionProgressDismissed] = useState(false);
+  const dismissedCollectionRuns = useRef(new Set());
   const lastRefreshedRun = useRef(null);
   const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
@@ -772,6 +773,9 @@ export default function Dashboard({ kind }) {
       : result.items.filter((item) => item.state === "PUBLISHED").length;
   const archiveStats = result.archive_stats || {};
   const collectionRunning = ACTIVE_STATES.has(collectionState.status);
+  const collectionRunKey = collectionState.finished_at || collectionState.started_at;
+  const isCollectionProgressDismissed = collectionProgressDismissed ||
+    Boolean(collectionRunKey && dismissedCollectionRuns.current.has(collectionRunKey));
 
   const columns = useMemo(() => {
     if (isTender) {
@@ -1149,11 +1153,14 @@ export default function Dashboard({ kind }) {
               این حراج از تابلوی مرکزی ستاد دریافت می‌شود و برای هر دو مجموعه مشترک است؛ اطلاعات آن فقط یک‌بار جمع‌آوری و ذخیره می‌شود.
             </div>
           )}
-          {!collectionProgressDismissed && (
+          {!isCollectionProgressDismissed && (
             <CollectionProgress
               state={collectionState}
               kind={kind}
-              onDismiss={() => setCollectionProgressDismissed(true)}
+              onDismiss={() => {
+                if (collectionRunKey) dismissedCollectionRuns.current.add(collectionRunKey);
+                setCollectionProgressDismissed(true);
+              }}
             />
           )}
 
