@@ -25,7 +25,9 @@ export default function ExcelExportButton({
     requestRef.current = request;
     setProgress({ status: "preparing", percent: null, error: "" });
 
-    request.open("GET", href, true);
+    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\\/$/, "");
+    const requestUrl = /^https?:\\/\\//i.test(href) ? href : apiBaseUrl + href;
+    request.open("GET", requestUrl, true);
     request.responseType = "blob";
     request.setRequestHeader(
       "Accept",
@@ -123,7 +125,15 @@ export default function ExcelExportButton({
           : progress.status === "complete"
             ? <CheckCircle2 size={16} />
             : <FileSpreadsheet size={16} />}
-        <span>{isBusy ? "در حال آماده‌سازی..." : progress.status === "error" ? "تلاش مجدد" : label}</span>
+        <span>
+          {progress.status === "preparing"
+            ? "در حال آماده‌سازی..."
+            : progress.status === "downloading"
+              ? "در حال دانلود..."
+              : progress.status === "error"
+                ? "تلاش مجدد"
+                : label}
+        </span>
       </button>
 
       {isBusy && (
