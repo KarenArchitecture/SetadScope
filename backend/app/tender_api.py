@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from io import BytesIO
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -91,8 +91,15 @@ def filtered_tender_query(
     documents_deadline_from: str | None = None,
     documents_deadline_to: str | None = None,
     matched_only: bool = False,
+    status: Literal["all", "active", "archive"] = "all",
 ):
     query = select(Tender)
+    if status != "all":
+        now = datetime.now(timezone.utc)
+        if status == "active":
+            query = query.where(Tender.proposal_deadline_at > now)
+        else:
+            query = query.where(Tender.proposal_deadline_at <= now)
     if matched_only:
         query = query.where(Tender.has_keyword_match.is_(True))
     if search and search.strip():
@@ -205,6 +212,7 @@ def excel_safe(value):
 def get_tenders(
     search: str | None = None,
     matched_only: bool = False,
+    status: Literal["all", "active", "archive"] = "all",
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -228,7 +236,7 @@ def get_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only,
+        matched_only=matched_only, status=status,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -254,6 +262,7 @@ def get_tenders(
 def export_tenders(
     search: str | None = None,
     matched_only: bool = False,
+    status: Literal["all", "active", "archive"] = "all",
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -274,7 +283,7 @@ def export_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only,
+        matched_only=matched_only, status=status,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -310,7 +319,10 @@ def export_tenders(
     return StreamingResponse(
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=setadscope_tenders.xlsx"},
+        headers={
+            "Content-Disposition": "attachment; filename=setadscope_tenders.xlsx",
+            "Content-Length": str(data.getbuffer().nbytes),
+        },
     )
 
 
