@@ -75,6 +75,41 @@ ORDER_FIELDS = {
 PROGRESS_PREFIX = "PROGRESS_JSON:"
 collection_lock = threading.Lock()
 
+COLLECTION_GROUP_LABELS = {
+    "executive_agencies": "دستگاه‌های اجرایی",
+    "amval_tamliki": "سازمان اموال تملیکی",
+    "shared": "تابلوی مشترک ستاد",
+}
+AUCTION_CATEGORY_LABELS = {
+    "movable": "منقول",
+    "immovable": "غیرمنقول",
+    "rental": "اجاره",
+    "minor": "جزئی",
+    "clearance": "حراج مشترک",
+}
+GLOBAL_COLLECTION_SOURCES = tuple(
+    {
+        "kind": "auctions",
+        "collection_group": group,
+        "category": category,
+        "label": (
+            "حراج مشترک ستاد"
+            if group == "shared"
+            else f"{AUCTION_CATEGORY_LABELS.get(category, category)} — "
+                 f"{COLLECTION_GROUP_LABELS.get(group, group)}"
+        ),
+    }
+    for group, categories in AUCTION_CATEGORIES_BY_GROUP.items()
+    for category in categories
+) + (
+    {
+        "kind": "tenders",
+        "collection_group": None,
+        "category": None,
+        "label": "مناقصه‌ها",
+    },
+)
+
 
 def collection_state_key(collection_group: str, category: str) -> str:
     return f"auctions:{collection_group}:{category}"
@@ -109,7 +144,44 @@ def initial_collection_state(
     }
 
 
-collection_states = {"tenders": initial_collection_state("tenders")}
+def initial_global_collection_state() -> dict:
+    return {
+        "kind": "global",
+        "status": "idle",
+        "phase": "idle",
+        "message": "هنوز بروزرسانی سراسری اجرا نشده است.",
+        "started_at": None,
+        "finished_at": None,
+        "current_source_index": 0,
+        "total_sources": len(GLOBAL_COLLECTION_SOURCES),
+        "completed_sources": 0,
+        "successful_sources": 0,
+        "failed_sources": [],
+        "current_source_key": None,
+        "current_source_label": None,
+        "current_source_status": "idle",
+        "current_progress_percent": 0,
+        "progress_percent": 0,
+        "overall_progress_percent": 0,
+        "current_phase": "idle",
+        "current_message": "",
+        "current_pages_completed": 0,
+        "current_total_pages": None,
+        "current_records_fetched": 0,
+        "error": None,
+    }
+
+
+def global_source_state_key(source: dict) -> str:
+    if source["kind"] == "tenders":
+        return "tenders"
+    return collection_state_key(source["collection_group"], source["category"])
+
+
+collection_states = {
+    "tenders": initial_collection_state("tenders"),
+    "global": initial_global_collection_state(),
+}
 for _group, _categories in AUCTION_CATEGORIES_BY_GROUP.items():
     for _category in _categories:
         _key = collection_state_key(_group, _category)
@@ -118,8 +190,32 @@ for _group, _categories in AUCTION_CATEGORIES_BY_GROUP.items():
 
 def update_collection_state(state_key: str, **values) -> dict:
     with collection_lock:
-        collection_states[state_key].update(values)
-        return dict(collection_states[state_key])
+        collection_state = collection_states[state_key]
+        collection_state.update(values)
+
+        global_state = collection_states.get("global")
+        if (
+            global_state is not None
+            and global_state["status"] == "running"
+            and global_state["current_source_key"] == state_key
+        ):
+            percent = max(0, min(100, int(collection_state.get("progress_percent", 0) or 0)))
+            total_sources = max(int(global_state.get("total_sources", 1)), 1)
+            completed_sources = int(global_state.get("completed_sources", 0))
+            global_state.update({
+                "current_source_status": collection_state.get("status", "collecting"),
+                "current_progress_percent": percent,
+                "progress_percent": percent,
+                "overall_progress_percent": round(
+                    (completed_sources + percent / 100) / total_sources * 100
+                ),
+                "current_phase": collection_state.get("phase", "collecting"),
+                "current_message": collection_state.get("message", "در حال دریافت اطلاعات..."),
+                "current_pages_completed": collection_state.get("pages_completed", 0),
+                "current_total_pages": collection_state.get("total_pages"),
+                "current_records_fetched": collection_state.get("records_fetched", 0),
+            })
+        return dict(collection_state)
 
 
 def run_collection_job(
@@ -284,6 +380,143 @@ def run_collection_job(
             finished_at=datetime.now(timezone.utc).isoformat(),
             output="\n".join(output_lines)[-5000:],
         )
+
+def run_global_collection_job() -> None:
+    """Run every registered auction/tender collector sequentially; failures are isolated."""
+    total_sources = len(GLOBAL_COLLECTION_SOURCES)
+    with collection_lock:
+        global_state = collection_states["global"]
+        if global_state["status"] != "running":
+            global_state = initial_global_collection_state()
+            global_state.update({
+                "status": "running",
+                "phase": "starting",
+                "started_at": datetime.now(timezone.utc).isoformat(),
+                "message": "در حال آماده‌سازی بروزرسانی سراسری...",
+            })
+            collection_states["global"] = global_state
+        global_state["total_sources"] = total_sources
+
+    for index, source in enumerate(GLOBAL_COLLECTION_SOURCES, start=1):
+        state_key = global_source_state_key(source)
+        label = source["label"]
+        with collection_lock:
+            global_state = collection_states["global"]
+            global_state.update({
+                "phase": "collecting",
+                "current_source_index": index,
+                "total_sources": total_sources,
+                "current_source_key": state_key,
+                "current_source_label": label,
+                "current_source_status": "collecting",
+                "current_progress_percent": 0,
+                "progress_percent": 0,
+                "overall_progress_percent": round(
+                    global_state["completed_sources"] / max(total_sources, 1) * 100
+                ),
+                "current_phase": "starting",
+                "current_message": f"در حال شروع منبع {index} از {total_sources}: {label}",
+                "current_pages_completed": 0,
+                "current_total_pages": None,
+                "current_records_fetched": 0,
+                "message": f"منبع {index} از {total_sources}: {label}",
+            })
+
+        try:
+            if source["kind"] == "tenders":
+                run_collection_job("tenders")
+            else:
+                run_collection_job(
+                    "auctions",
+                    source["collection_group"],
+                    source["category"],
+                )
+        except Exception as exc:
+            update_collection_state(
+                state_key,
+                status="failed",
+                phase="failed",
+                message="اجرای این منبع با خطا مواجه شد.",
+                error=str(exc)[-3000:],
+                finished_at=datetime.now(timezone.utc).isoformat(),
+            )
+
+        with collection_lock:
+            global_state = collection_states["global"]
+            source_state = collection_states[state_key]
+            succeeded = source_state.get("status") == "completed"
+            completed_sources = index
+            successful_sources = int(global_state.get("successful_sources", 0))
+            failed_sources = list(global_state.get("failed_sources", []))
+
+            if succeeded:
+                successful_sources += 1
+                current_message = f"{label} با موفقیت بروزرسانی شد."
+            else:
+                failed_sources.append({
+                    "key": state_key,
+                    "label": label,
+                    "error": (
+                        source_state.get("error")
+                        or source_state.get("message")
+                        or "اجرای منبع ناموفق بود."
+                    ),
+                })
+                current_message = (
+                    f"{label} ناموفق بود؛ اجرای منابع بعدی ادامه پیدا می‌کند."
+                )
+
+            current_percent = (
+                100
+                if succeeded
+                else max(0, min(100, int(source_state.get("progress_percent", 0) or 0)))
+            )
+            global_state.update({
+                "completed_sources": completed_sources,
+                "successful_sources": successful_sources,
+                "failed_sources": failed_sources,
+                "current_source_status": source_state.get("status", "failed"),
+                "current_progress_percent": current_percent,
+                "progress_percent": current_percent,
+                "overall_progress_percent": round(completed_sources / max(total_sources, 1) * 100),
+                "current_phase": source_state.get("phase", "failed" if not succeeded else "completed"),
+                "current_message": current_message,
+                "current_pages_completed": source_state.get("pages_completed", 0),
+                "current_total_pages": source_state.get("total_pages"),
+                "current_records_fetched": source_state.get("records_fetched", 0),
+                "message": (
+                    f"منبع {index} از {total_sources} تمام شد؛ "
+                    f"{successful_sources} منبع با موفقیت بروزرسانی شده‌اند."
+                ),
+            })
+
+    with collection_lock:
+        global_state = collection_states["global"]
+        failed_count = len(global_state["failed_sources"])
+        successful_count = int(global_state["successful_sources"])
+        final_status = "completed_with_errors" if failed_count else "completed"
+        final_message = (
+            f"بروزرسانی سراسری تمام شد؛ {successful_count} از {total_sources} منبع "
+            f"با موفقیت بروزرسانی شدند."
+            if failed_count
+            else f"تمام {total_sources} منبع با موفقیت بروزرسانی شدند."
+        )
+        global_state.update({
+            "status": final_status,
+            "phase": "completed",
+            "current_source_index": total_sources,
+            "current_source_key": None,
+            "current_source_label": "تمام منابع",
+            "current_source_status": final_status,
+            "current_progress_percent": 100,
+            "progress_percent": 100,
+            "overall_progress_percent": 100,
+            "current_phase": "completed",
+            "current_message": final_message,
+            "message": final_message,
+            "finished_at": datetime.now(timezone.utc).isoformat(),
+        })
+
 
 def excel_safe(value):
     """Prevent untrusted Setad strings being interpreted as spreadsheet formulas."""
@@ -568,6 +801,47 @@ def collection_status_response(
     return state
 
 
+@app.get("/api/collection/global/status")
+def get_global_collection_status():
+    with collection_lock:
+        return dict(collection_states["global"])
+
+
+@app.post("/api/collection/global/run", status_code=202)
+def start_global_collection(background_tasks: BackgroundTasks):
+    with collection_lock:
+        global_state = collection_states["global"]
+        if global_state["status"] == "running":
+            raise HTTPException(status_code=409, detail="A global collection is already running.")
+
+        active_sources = [
+            key
+            for key, state in collection_states.items()
+            if key != "global" and state.get("status") in {"collecting", "importing"}
+        ]
+        if active_sources:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "یک عملیات جمع‌آوری مستقل در حال اجراست؛ ابتدا آن را تمام کن و سپس "
+                    "بروزرسانی سراسری را شروع کن."
+                ),
+            )
+
+        next_state = initial_global_collection_state()
+        next_state.update({
+            "status": "running",
+            "phase": "starting",
+            "started_at": datetime.now(timezone.utc).isoformat(),
+            "message": "در حال آماده‌سازی بروزرسانی سراسری آگهی‌ها...",
+        })
+        collection_states["global"] = next_state
+        response_state = dict(next_state)
+
+    background_tasks.add_task(run_global_collection_job)
+    return response_state
+
+
 @app.get("/api/collection/{kind}/status")
 def get_collection_status(
     kind: Literal["auctions", "tenders"],
@@ -595,6 +869,8 @@ def start_collection(
 
     state_key = "tenders"
     with collection_lock:
+        if collection_states["global"]["status"] == "running":
+            raise HTTPException(status_code=409, detail="A global collection is already running.")
         state = collection_states[state_key]
         if state["status"] in {"collecting", "importing"}:
             raise HTTPException(status_code=409, detail="A tenders collection job is already running.")
@@ -641,6 +917,8 @@ def start_auction_category_collection(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     state_key = collection_state_key(group, category)
     with collection_lock:
+        if collection_states["global"]["status"] == "running":
+            raise HTTPException(status_code=409, detail="A global collection is already running.")
         state = collection_states[state_key]
         if state["status"] in {"collecting", "importing"}:
             raise HTTPException(
