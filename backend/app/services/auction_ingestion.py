@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timezone
 from pathlib import Path
 
+from sqlalchemy import or_
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.orm import Session
 
@@ -231,6 +232,8 @@ def import_auction_pages(
         "fetched": 0,
         "matched": 0,
         "stored": 0,
+        "changed": 0,
+        "unchanged": 0,
         "skipped_missing_id": 0,
         "skipped_invalid_record": 0,
     }
@@ -258,12 +261,29 @@ def import_auction_pages(
                     continue
                 if item["has_keyword_match"]:
                     totals["matched"] += 1
-                stmt = insert(Auction).values(**item).on_conflict_do_update(
+                stmt = insert(Auction).values(**item)
+                identity_fields = {"collection_group", "source", "source_party_id"}
+                update_values = {
+                    key: getattr(stmt.excluded, key)
+                    for key in item
+                    if key not in identity_fields
+                }
+                changed_conditions = [
+                    getattr(Auction, key).is_distinct_from(getattr(stmt.excluded, key))
+                    for key in item
+                    if key not in identity_fields
+                ]
+                stmt = stmt.on_conflict_do_update(
                     constraint="uq_auctions_group_source_party",
-                    set_={**item, "updated_at": datetime.now(timezone.utc)},
-                )
-                db.execute(stmt)
+                    set_={**update_values, "updated_at": datetime.now(timezone.utc)},
+                    where=or_(*changed_conditions),
+                ).returning(Auction.id)
+                changed_id = db.execute(stmt).scalar_one_or_none()
                 totals["stored"] += 1
+                if changed_id is None:
+                    totals["unchanged"] += 1
+                else:
+                    totals["changed"] += 1
             db.commit()
             if progress_callback:
                 progress_callback({"pages_completed": i, "total_pages": len(paths), **totals})
