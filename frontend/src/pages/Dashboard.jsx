@@ -183,10 +183,10 @@ function StatCard({
       <div className="stat-card__content">
         <span className="stat-card__label">{label}</span>
         <strong className="stat-card__value">{formatNumber(archiveCount)}</strong>
-        <span className="stat-card__hint">{hint}</span>
         <span className="stat-card__page-count">
           {pageLabel}: {formatNumber(value)}
         </span>
+        <span className="stat-card__hint">{hint}</span>
       </div>
     </article>
   );
