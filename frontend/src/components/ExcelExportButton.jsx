@@ -118,7 +118,13 @@ export default function ExcelExportButton({
         className="button button--secondary excel-export__button"
         onClick={handleExport}
         disabled={isBusy}
-        aria-label={isBusy ? "در حال آماده‌سازی خروجی Excel" : label}
+        aria-label={
+          progress.status === "preparing"
+            ? "در حال آماده‌سازی خروجی Excel"
+            : progress.status === "downloading"
+              ? "در حال دانلود خروجی Excel"
+              : label
+        }
       >
         {isBusy
           ? <LoaderCircle size={16} className="spin" />
