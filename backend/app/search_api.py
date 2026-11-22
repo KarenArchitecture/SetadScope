@@ -4,11 +4,13 @@ from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import Numeric, String, Text, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
 
 from app.db.models import Auction, Tender
 from app.db.session import get_db
+from app.services.excel_export import build_excel
 from setad_scope.collectors.auction_sources.registry import resolve_collection_group
 
 
@@ -156,6 +158,12 @@ def _searchable_rows(
     return union_all(auction_query, tender_query).subquery("global_listings")
 
 
+def excel_safe(value):
+    if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+        return "'" + value
+    return value
+
+
 @router.get("/api/search")
 def global_search(
     search: str | None = None,
@@ -242,6 +250,9 @@ def global_search(
         item["category_label"] = AUCTION_CATEGORIES.get(item["category"], "—")
         items.append(item)
 
+    archive_auction_count = db.scalar(select(func.count(Auction.id))) or 0
+    archive_tender_count = db.scalar(select(func.count(Tender.id))) or 0
+
     return {
         "items": items,
         "page": page,
@@ -252,6 +263,11 @@ def global_search(
             "all": auction_count + tender_count,
             "auctions": auction_count,
             "tenders": tender_count,
+        },
+        "archive_summary": {
+            "all": archive_auction_count + archive_tender_count,
+            "auctions": archive_auction_count,
+            "tenders": archive_tender_count,
         },
         "filter_options": {
             "sources": [
@@ -270,3 +286,94 @@ def global_search(
             ],
         },
     }
+
+
+@router.get("/api/search/export.xlsx")
+def export_global_search(
+    search: str | None = None,
+    kind: Literal["all", "auction", "tender"] = "all",
+    source: str | None = None,
+    category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
+    province: str | None = None,
+    city: str | None = None,
+    status: Literal["all", "active", "archive"] = "all",
+    matched_only: bool = False,
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    sort_by: str = Query("announcement_at"),
+    sort_dir: Literal["asc", "desc"] = "desc",
+    db: Session = Depends(get_db),
+):
+    if sort_by not in SORT_COLUMNS:
+        raise HTTPException(status_code=422, detail="Unsupported sort_by column")
+    if collection_group != "all" and category is not None:
+        try:
+            resolve_collection_group(category, collection_group)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    rows = _searchable_rows(
+        search, source, province, city, category, status, matched_only, collection_group,
+    )
+    query = select(rows)
+    if kind != "all":
+        query = query.where(rows.c.record_type == kind)
+
+    column = rows.c[SORT_COLUMNS[sort_by]]
+    ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
+    query = query.order_by(ordering, rows.c.record_type.asc(), rows.c.record_id.asc())
+
+    group_labels = {
+        "executive_agencies": "دستگاه‌های اجرایی",
+        "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
+        "shared": "حراج مشترک ستاد",
+    }
+
+    headers = [
+        "شناسه رکورد", "نوع معامله", "مجموعه", "دسته مزایده", "منبع",
+        "شماره آگهی", "عنوان", "سازمان برگزارکننده", "استان", "شهر",
+        "تاریخ اعلام", "مهلت پیشنهاد", "مبلغ پایه", "واحد پول",
+        "وضعیت", "مرتبط با کلیدواژه‌ها",
+    ]
+
+    def export_rows():
+        for row in db.execute(query).mappings().yield_per(500):
+            record_type = row["record_type"]
+            source_label = SOURCE_LABELS.get(row["source"], row["source"])
+            if row.get("collection_group") == "amval_tamliki" and row["source"] == "setad_clearance_5315":
+                source_label = "سامانه حراج اموال تملیکی"
+
+            announcement_at = row["announcement_at"]
+            deadline_at = row["deadline_at"]
+            yield [
+                row["record_id"],
+                "مزایده" if record_type == "auction" else "مناقصه",
+                group_labels.get(row.get("collection_group"), "—"),
+                AUCTION_CATEGORIES.get(row.get("category"), "—"),
+                excel_safe(source_label),
+                excel_safe(row["record_number"]),
+                excel_safe(row["title"]),
+                excel_safe(row["organization"]),
+                excel_safe(row["province"]),
+                excel_safe(row["city"]),
+                announcement_at.isoformat() if announcement_at else "",
+                deadline_at.isoformat() if deadline_at else "",
+                row["base_total_price"],
+                row["money_unit"] or "",
+                excel_safe(row["state"]),
+                "بله" if row["has_keyword_match"] else "خیر",
+            ]
+
+    data = build_excel(
+        "تمام معاملات", "SetadScopeGlobal", headers, export_rows(),
+        widths=[18, 15, 34, 18, 36, 24, 54, 38, 20, 20, 25, 25, 24, 16, 20, 20],
+        numeric_columns=(13,),
+    )
+
+    return StreamingResponse(
+        data,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": "attachment; filename=setadscope_global.xlsx",
+            "Content-Length": str(data.getbuffer().nbytes),
+        },
+    )
