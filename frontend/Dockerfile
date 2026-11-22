@@ -1,4 +1,5 @@
-FROM public.ecr.aws/docker/library/node:22-slim
+# Use the official Docker Hub image; avoid ECR Public data-quota throttling.
+FROM docker.io/library/node:22-slim
 
 WORKDIR /app
 

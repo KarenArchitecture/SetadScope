@@ -29,6 +29,7 @@ export default function ListingTable({
   sortDir,
   onSort,
   advancedSearch,
+  headerActions,
   hideSearch = false,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
@@ -41,7 +42,10 @@ export default function ListingTable({
           <span className="eyebrow">{eyebrow}</span>
           <h2>{title}</h2>
         </div>
-        <span className="raw-tag">{tag}</span>
+        <div className="data-panel__header-actions">
+          {headerActions}
+          <span className="raw-tag">{tag}</span>
+        </div>
       </div>
 
       {!hideSearch && (

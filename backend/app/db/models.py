@@ -27,6 +27,9 @@ class Auction(Base):
     __tablename__ = "auctions"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    collection_group: Mapped[str] = mapped_column(
+        String(32), nullable=False, default="executive_agencies", server_default="executive_agencies"
+    )
     source: Mapped[str] = mapped_column(String(40), default="setad_main_estate", nullable=False)
     source_party_id: Mapped[str] = mapped_column(String(120), nullable=False)
     category: Mapped[str] = mapped_column(String(24), nullable=False, default="movable", server_default="movable")
@@ -72,7 +75,10 @@ class Auction(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("source", "source_party_id", name="uq_auctions_source_party"),
+        UniqueConstraint(
+            "collection_group", "source", "source_party_id",
+            name="uq_auctions_group_source_party",
+        ),
         Index("ix_auctions_deadline", "proposal_deadline"),
         Index("ix_auctions_site_show_start", "site_show_start_at"),
         Index("ix_auctions_publish_start", "publish_start_at"),
@@ -81,6 +87,7 @@ class Auction(Base):
         Index("ix_auctions_state", "state"),
         Index("ix_auctions_category", "category"),
         Index("ix_auctions_category_match", "category", "has_keyword_match"),
+        Index("ix_auctions_group_category", "collection_group", "category"),
     )
 
 
@@ -142,10 +149,15 @@ class IngestionRun(Base):
     skipped_unknown_deadline: Mapped[int] = mapped_column(BigInteger, default=0)
     error: Mapped[str | None] = mapped_column(Text)
     kind: Mapped[str | None] = mapped_column(String(20))
+    collection_group: Mapped[str | None] = mapped_column(String(32))
     category: Mapped[str | None] = mapped_column(String(24))
 
     __table_args__ = (
         Index("ix_ingestion_runs_scope_finished", "kind", "category", "status", "finished_at"),
+        Index(
+            "ix_ingestion_runs_group_scope_finished",
+            "kind", "collection_group", "category", "status", "finished_at",
+        ),
     )
 
 

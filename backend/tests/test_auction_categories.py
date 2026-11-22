@@ -131,6 +131,8 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
     row, status = project_auction(raw, "clearance")
     assert status == "unmatched"
     assert row["source_party_id"] == "4577196"
+    assert row["collection_group"] == "shared"
+    assert row["source"] == "setad_clearance_shared"
     assert row["auction_no"] == "3105001053005896"
     assert row["money_unit"] == "IRR"
     assert row["base_total_price"] == Decimal("9000000")
@@ -155,14 +157,167 @@ def test_endpoints_and_zero_based_pagination():
         if category == "immovable":
             assert params["propertySearchCriteriaDto.auctionType"] == "NON_PROPERTY"
         if category == "clearance":
-            assert params["selectedOrganization"] == "5315"
-            assert params["tagCode"] == "342"
+            assert params["tagCode"] == "341,343"
+            assert "selectedOrganization" not in params
             assert params["boardCode"] == "3"
 
 
 def test_pagination_totals_for_both_apis():
     assert page_totals({"total": 37, "records": 1095}, "movable", 30) == (37, 1095)
     assert page_totals({"totalPages": 44, "totalElements": 218}, "clearance", 5) == (44, 218)
+
+
+def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
+    from setad_scope.collectors.auction_sources.registry import (
+        CATEGORIES_BY_GROUP,
+        resolve_collection_group,
+    )
+
+    expected_eauc = ("movable", "immovable", "rental", "minor")
+    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_eauc
+    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc
+    assert CATEGORIES_BY_GROUP["shared"] == ("clearance",)
+
+    for group in ("executive_agencies", "amval_tamliki"):
+        for category, endpoint in {
+            "movable": "mainEstate-Load.action",
+            "immovable": "mainImmovable-Load.action",
+            "rental": "mainRental-Load.action",
+            "minor": "mainMinor-Load.action",
+        }.items():
+            url, params = request_details(category, 0, 30, group)
+            assert endpoint in url
+            assert params["page"] == 0
+            assert params["rows"] == 30
+
+    clearance_url, clearance_params = request_details("clearance", 0, 5, "shared")
+    assert "/api/centralboard/cards/" in clearance_url
+    assert clearance_params["tagCode"] == "341,343"
+    assert "selectedOrganization" not in clearance_params
+    assert resolve_collection_group("clearance") == "shared"
+    with pytest.raises(ValueError, match="not configured"):
+        resolve_collection_group("clearance", "executive_agencies")
+    with pytest.raises(ValueError, match="not configured"):
+        resolve_collection_group("clearance", "amval_tamliki")
+
+
+def test_project_auction_records_the_explicit_collection_group():
+    raw = {
+        "auctionParty": {
+            "id": 1393501,
+            "title": "فروش باتری ups",
+            "baseTotalPrice": 1641500000,
+            "visitCity": city("مراوه تپه", "گلستان"),
+            "auction": auction("فروش باتری ups"),
+        }
+    }
+    executive, _ = project_auction(raw, "movable", collection_group="executive_agencies")
+    amval, _ = project_auction(raw, "movable", collection_group="amval_tamliki")
+
+    assert executive["collection_group"] == "executive_agencies"
+    assert amval["collection_group"] == "amval_tamliki"
+    assert executive["source"] == amval["source"] == "setad_main_estate"
+
+
+def test_amval_manifest_is_scoped_even_when_endpoint_and_payload_shape_are_shared(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    calls = []
+
+    def fake_fetch(session, category, page, rows, collection_group=None):
+        calls.append((collection_group, page))
+        return {"gridModel": [{"id": 700 + page}], "page": page or 1, "total": 2, "records": 2}
+
+    monkeypatch.setattr(module, "fetch_page", fake_fetch)
+    root = tmp_path / "amval" / "movable"
+    summary = collect(
+        "movable",
+        raw_dir=root,
+        session=Mock(),
+        delay=0,
+        collection_group="amval_tamliki",
+    )
+
+    assert summary["collection_group"] == "amval_tamliki"
+    assert calls == [("amval_tamliki", 0), ("amval_tamliki", 2)]
+    manifest = json.loads(next(root.glob("movable_run_*.json")).read_text(encoding="utf-8"))
+    assert manifest["collection_group"] == "amval_tamliki"
+
+
+def test_eauc_groups_use_distinct_gateway_contexts_and_amval_identity_guard():
+    from setad_scope.collectors.auction_sources.registry import source_for
+    from setad_scope.collectors.fetch_auction_categories import (
+        SourceContextMismatch,
+        validate_source_context,
+    )
+
+    categories = ("movable", "immovable", "rental", "minor")
+    for category in categories:
+        executive = source_for(category, "executive_agencies")
+        amval = source_for(category, "amval_tamliki")
+        assert executive.path == amval.path
+        assert executive.landing_url.endswith("gateway=setad")
+        assert amval.landing_url.endswith("gateway=amvalTamliki")
+        assert executive.expected_auctioneer_id is None
+        assert amval.expected_auctioneer_id == "2"
+
+    amval = source_for("movable", "amval_tamliki")
+    valid_row = {
+        "auctionParty": {
+            "auction": {"auctioneer": {"id": 2, "name": "سازمان جمع آوری و فروش اموال تملیکی"}}
+        }
+    }
+    wrong_collection_row = {
+        "auctionParty": {
+            "auction": {"auctioneer": {"id": 43, "name": "بانک مسکن"}}
+        }
+    }
+
+    validate_source_context([valid_row], amval)
+    with pytest.raises(SourceContextMismatch, match="expected auctioneer.id=2"):
+        validate_source_context([wrong_collection_row], amval)
+
+
+def test_create_session_bootstraps_the_selected_eauc_gateway(monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    sessions = []
+
+    class FakeResponse:
+        def __init__(self, url):
+            self.url = url
+
+        def raise_for_status(self):
+            return None
+
+    class FakeSession:
+        def __init__(self):
+            self.headers = {}
+            self.proxies = {}
+            self.trust_env = True
+            self.visited_urls = []
+            sessions.append(self)
+
+        def get(self, url, timeout):
+            self.visited_urls.append(url)
+            return FakeResponse(url)
+
+    monkeypatch.setattr(module.requests, "Session", FakeSession)
+
+    executive = module.create_session("movable", "executive_agencies")
+    amval = module.create_session("movable", "amval_tamliki")
+
+    assert sessions[0] is executive
+    assert sessions[1] is amval
+    assert executive.visited_urls == [
+        "https://eauc.setadiran.ir/eauc/welcome.action?gateway=setad"
+    ]
+    assert amval.visited_urls == [
+        "https://eauc.setadiran.ir/eauc/welcome.action?gateway=amvalTamliki"
+    ]
+    assert executive.headers["Referer"].endswith("gateway=setad")
+    assert amval.headers["Referer"].endswith("gateway=amvalTamliki")
+    assert executive.trust_env is False and amval.trust_env is False
 
 
 def test_auction_collector_ignores_environment_proxy_settings():

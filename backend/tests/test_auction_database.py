@@ -81,10 +81,24 @@ def test_legacy_keyword_matched_auction_survives_0005_migration():
         )
         assert legacy is not None, "Legacy row inserted before 0005 migration was lost"
         assert legacy.category == "movable"
+        assert legacy.collection_group == "executive_agencies"
         assert legacy.has_keyword_match is True
         assert legacy.matched_keywords == ["چوب"]
         assert legacy.raw_payload == {"marker": "pre-migration"}
         assert legacy.first_seen_at is not None
+
+
+def test_legacy_clearance_source_is_migrated_to_shared_scope():
+    with SessionLocal() as db:
+        legacy = db.scalar(
+            select(Auction).where(
+                Auction.source == "setad_clearance_shared",
+                Auction.source_party_id == "pre-migration-clearance",
+            )
+        )
+        assert legacy is not None, "Legacy Amval Tamliki clearance row was lost"
+        assert legacy.category == "clearance"
+        assert legacy.collection_group == "shared"
 
 
 def test_all_category_imports_idempotence_and_http_filters(tmp_path):
@@ -97,6 +111,8 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 first = import_auction_pages(db, [path], category)
                 second = import_auction_pages(db, [path], category)
                 assert first["stored"] == 1 and second["stored"] == 1
+                assert first["changed"] == 1 and first["unchanged"] == 0
+                assert second["changed"] == 0 and second["unchanged"] == 1
 
                 db_rows = db.scalars(
                     select(Auction).where(Auction.source == SOURCES[category])
@@ -120,13 +136,16 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 assert body["total"] >= 1
                 assert all(item["category"] == category for item in body["items"])
 
+                collection_group = "shared" if category == "clearance" else "executive_agencies"
                 collection_status = client.get(f"/api/collection/auctions/{category}/status")
                 assert collection_status.status_code == 200
+                assert collection_status.json()["collection_group"] == collection_group
                 with SessionLocal() as history_db:
                     expected_update = history_db.scalar(
                         select(IngestionRun.finished_at)
                         .where(
                             IngestionRun.kind == "auctions",
+                            IngestionRun.collection_group == collection_group,
                             IngestionRun.category == category,
                             IngestionRun.status == "success",
                         )
@@ -158,6 +177,116 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
             db.execute(delete(Auction).where(Auction.source.in_(list(SOURCES.values()))))
             db.commit()
 
+
+
+def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
+    from io import BytesIO
+    from openpyxl import load_workbook
+
+    source_id = "73120001"
+    raw = {
+        "auctionParty": {
+            "id": int(source_id),
+            "title": "فروش چوب آزمایشی برای تفکیک مجموعه",
+            "baseTotalPrice": 125000,
+            "auction": {
+                "id": 819991,
+                "auctionNo": "GROUP-A-991",
+                "title": "فروش چوب آزمایشی برای تفکیک مجموعه",
+                "toProposalDate": "1405/10/10 13:00:00",
+                "auctioneer": {"name": "سازمان آزمایشی"},
+            },
+        }
+    }
+    path = tmp_path / "same-source-id.json"
+    path.write_text(json.dumps({"gridModel": [raw]}, ensure_ascii=False), encoding="utf-8")
+
+    with SessionLocal() as db:
+        try:
+            for group in ("executive_agencies", "amval_tamliki"):
+                first = import_auction_pages(db, [path], "movable", collection_group=group)
+                second = import_auction_pages(db, [path], "movable", collection_group=group)
+                assert first["stored"] == 1 and second["stored"] == 1
+
+            rows = db.scalars(
+                select(Auction).where(
+                    Auction.source == SOURCES["movable"],
+                    Auction.source_party_id == source_id,
+                )
+            ).all()
+            assert {row.collection_group for row in rows} == {
+                "executive_agencies", "amval_tamliki",
+            }
+            assert len(rows) == 2
+
+            client = TestClient(app)
+            amval_list = client.get(
+                "/api/auctions",
+                params={
+                    "category": "movable",
+                    "collection_group": "amval_tamliki",
+                    "matched_only": "false",
+                    "search": "GROUP-A-991",
+                },
+            )
+            assert amval_list.status_code == 200, amval_list.text
+            assert amval_list.json()["total"] == 1
+            assert amval_list.json()["items"][0]["collection_group"] == "amval_tamliki"
+
+            global_search = client.get(
+                "/api/search",
+                params={
+                    "kind": "auction",
+                    "collection_group": "amval_tamliki",
+                    "matched_only": "false",
+                    "search": "GROUP-A-991",
+                },
+            )
+            assert global_search.status_code == 200, global_search.text
+            assert global_search.json()["total"] == 1
+            assert global_search.json()["items"][0]["collection_group"] == "amval_tamliki"
+
+            invalid_group_filter = client.get(
+                "/api/auctions",
+                params={"category": "clearance", "collection_group": "executive_agencies"},
+            )
+            assert invalid_group_filter.status_code == 422
+            invalid_search_filter = client.get(
+                "/api/search",
+                params={
+                    "kind": "auction",
+                    "category": "clearance",
+                    "collection_group": "executive_agencies",
+                },
+            )
+            assert invalid_search_filter.status_code == 422
+
+            history = client.get(
+                "/api/collection/auctions/history",
+                params={"collection_group": "amval_tamliki", "category": "movable"},
+            )
+            assert history.status_code == 200
+            assert history.json()["items"]
+            assert all(item["collection_group"] == "amval_tamliki" for item in history.json()["items"])
+
+            export = client.get(
+                "/api/auctions/export.xlsx",
+                params={
+                    "category": "movable",
+                    "collection_group": "amval_tamliki",
+                    "matched_only": "false",
+                    "search": "GROUP-A-991",
+                },
+            )
+            assert export.status_code == 200
+            sheet = load_workbook(BytesIO(export.content)).active
+            headers = [cell.value for cell in sheet[1]]
+            assert "مجموعه" in headers
+            group_column = headers.index("مجموعه") + 1
+            assert sheet.cell(row=2, column=group_column).value == "amval_tamliki"
+        finally:
+            db.execute(delete(Auction).where(Auction.source_party_id == source_id))
+            db.commit()
 
 
 def test_saved_keyword_settings_affect_next_auction_import(tmp_path):
@@ -228,6 +357,11 @@ def test_tender_relevance_filter_and_export_share_same_dataset(tmp_path):
         try:
             result = import_tender_pages(db, [raw])
             assert result["stored"] == 2
+            assert result["changed"] == 2 and result["unchanged"] == 0
+
+            unchanged = import_tender_pages(db, [raw])
+            assert unchanged["stored"] == 2
+            assert unchanged["changed"] == 0 and unchanged["unchanged"] == 2
 
             client = TestClient(app)
             collection_status = client.get("/api/collection/tenders/status")

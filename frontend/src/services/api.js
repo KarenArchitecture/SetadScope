@@ -58,22 +58,49 @@ export async function getApiHealth() {
   return response.data;
 }
 
-export async function startCollection(kind, category = "movable") {
-  const path = kind === "tenders"
-    ? "/api/collection/tenders/run"
-    : "/api/collection/auctions/" + category + "/run";
-  const response = await api.post(path);
+export async function startCollection(
+  kind,
+  category = "movable",
+  collectionGroup = "executive_agencies",
+) {
+  if (kind === "tenders") {
+    const response = await api.post("/api/collection/tenders/run");
+    return response.data;
+  }
+  const response = await api.post(
+    "/api/collection/auctions/" + category + "/run",
+    null,
+    { params: { collection_group: collectionGroup } },
+  );
   return response.data;
 }
 
-export async function getCollectionStatus(kind, category = "movable") {
-  const path = kind === "tenders"
-    ? "/api/collection/tenders/status"
-    : "/api/collection/auctions/" + category + "/status";
-  const response = await api.get(path);
+export async function getCollectionStatus(
+  kind,
+  category = "movable",
+  collectionGroup = "executive_agencies",
+) {
+  if (kind === "tenders") {
+    const response = await api.get("/api/collection/tenders/status");
+    return response.data;
+  }
+  const response = await api.get(
+    "/api/collection/auctions/" + category + "/status",
+    { params: { collection_group: collectionGroup } },
+  );
   return response.data;
 }
 
+
+export async function startGlobalCollection() {
+  const response = await api.post("/api/collection/global/run");
+  return response.data;
+}
+
+export async function getGlobalCollectionStatus() {
+  const response = await api.get("/api/collection/global/status");
+  return response.data;
+}
 
 export async function getKeywords() {
   const response = await api.get("/api/settings/keywords");

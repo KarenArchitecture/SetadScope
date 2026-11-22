@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ArrowDownToLine,
   ChevronDown,
   Building2,
   CalendarDays,
@@ -26,23 +25,41 @@ import {
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
+import ExcelExportButton from "../components/ExcelExportButton";
+import DeadlineStatusSelect from "../components/DeadlineStatusSelect";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
 import "../styles/redesign.css";
 
 const PAGE_SIZE = 20;
-const AUCTION_CATEGORIES = [
-  { key: "movable", label: "منقول" },
-  { key: "immovable", label: "غیرمنقول" },
-  { key: "rental", label: "اجاره" },
-  { key: "minor", label: "جزئی" },
-  { key: "clearance", label: "حراج اموال تملیکی" },
+const AUCTION_GROUPS = [
+  { key: "executive_agencies", label: "دستگاه‌های اجرایی", description: "مزایده‌های دستگاه‌های اجرایی" },
+  { key: "amval_tamliki", label: "سازمان جمع‌آوری و فروش اموال تملیکی", description: "مزایده‌های اموال تملیکی" },
 ];
+const SHARED_AUCTION_CATEGORIES = [
+  { key: "clearance", label: "حراج مشترک" },
+];
+const AUCTION_CATEGORIES_BY_GROUP = {
+  executive_agencies: [
+    { key: "movable", label: "منقول" },
+    { key: "immovable", label: "غیرمنقول" },
+    { key: "rental", label: "اجاره" },
+    { key: "minor", label: "جزئی" },
+  ],
+  amval_tamliki: [
+    { key: "movable", label: "منقول" },
+    { key: "immovable", label: "غیرمنقول" },
+    { key: "rental", label: "اجاره" },
+    { key: "minor", label: "جزئی" },
+  ],
+  shared: [{ key: "clearance", label: "حراج مشترک" }],
+};
 const ACTIVE_STATES = new Set(["collecting", "importing"]);
 const EMPTY_FILTERS = {
   province: "",
   city: "",
+  status: "all",
   state: "",
   type_name: "",
   announcement_from: "",
@@ -148,7 +165,17 @@ function remainingTime(value) {
   return formatNumber(hours) + " ساعت و " + formatNumber(minutes) + " دقیقه";
 }
 
-function StatCard({ icon: Icon, label, value, hint, archiveValue, tone = "blue" }) {
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  hint,
+  archiveValue,
+  pageLabel = "در صفحه جاری",
+  tone = "blue",
+}) {
+  const archiveCount = archiveValue === undefined ? value : archiveValue;
+
   return (
     <article className="stat-card">
       <div className={"stat-card__icon stat-card__icon--" + tone}>
@@ -156,19 +183,17 @@ function StatCard({ icon: Icon, label, value, hint, archiveValue, tone = "blue" 
       </div>
       <div className="stat-card__content">
         <span className="stat-card__label">{label}</span>
-        <strong className="stat-card__value">{formatNumber(value)}</strong>
+        <strong className="stat-card__value">{formatNumber(archiveCount)}</strong>
+        <span className="stat-card__page-count">
+          {pageLabel}: {formatNumber(value)}
+        </span>
         <span className="stat-card__hint">{hint}</span>
-        {archiveValue !== undefined && (
-          <span className="stat-card__archive">
-            کل آرشیو: {formatNumber(archiveValue)}
-          </span>
-        )}
       </div>
     </article>
   );
 }
 
-function CollectionProgress({ state, kind }) {
+function CollectionProgress({ state, kind, onDismiss }) {
   if (!state || state.status === "idle") return null;
 
   const isTender = kind === "tenders";
@@ -190,6 +215,17 @@ function CollectionProgress({ state, kind }) {
           <strong>{statusLabel}</strong>
         </div>
         <span className="collection-progress__percent">{formatNumber(percent)}٪</span>
+        {state.status === "completed" && percent >= 100 && (
+          <button
+            type="button"
+            className="collection-progress__dismiss"
+            onClick={onDismiss}
+            aria-label="بستن وضعیت جمع‌آوری"
+            title="بستن"
+          >
+            <X size={14} />
+          </button>
+        )}
       </div>
       <div
         className="collection-progress__track"
@@ -287,7 +323,7 @@ function FiltersPanel({
               <small>
                 {activeCount
                   ? toPersianDigits(activeCount) + " فیلتر فعال"
-                  : "استان، شهر، وضعیت و بازه‌های زمانی"}
+                  : "استان، شهر، وضعیت مهلت و بازه‌های زمانی"}
               </small>
             </span>
           </span>
@@ -332,6 +368,13 @@ function FiltersPanel({
                   <option value="">{filters.province ? "همه شهرهای استان" : "ابتدا استان را انتخاب کنید"}</option>
                   {cityOptions.map((value) => <option key={value} value={value}>{value}</option>)}
                 </select>
+              </FilterField>
+
+              <FilterField label="وضعیت مهلت">
+                <DeadlineStatusSelect
+                  value={filters.status}
+                  onChange={(value) => onChange("status", value)}
+                />
               </FilterField>
 
               <FilterField label="وضعیت آگهی">
@@ -484,7 +527,12 @@ export function DetailModal({ record, kind, loading, onClose }) {
         ]
       : [
           ["شناسه ردیف", record.id],
-          ["دسته مزایده", AUCTION_CATEGORIES.find((item) => item.key === record.category)?.label],
+          ["مجموعه", ({
+            executive_agencies: "دستگاه‌های اجرایی",
+            amval_tamliki: "سازمان جمع‌آوری و فروش اموال تملیکی",
+            shared: "حراج مشترک ستاد",
+          })[record.collection_group] || "—"],
+          ["دسته مزایده", AUCTION_CATEGORIES_BY_GROUP[record.collection_group]?.find((item) => item.key === record.category)?.label || "—"],
           ["شناسه منبع", record.source_party_id],
           ["شناسه مزایده", record.auction_id],
           ["عنوان مورد", record.item_title],
@@ -578,9 +626,17 @@ export function DetailModal({ record, kind, loading, onClose }) {
 export default function Dashboard({ kind }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
+  const [collectionGroup, setCollectionGroup] = useState("executive_agencies");
   const [auctionCategory, setAuctionCategory] = useState("movable");
   const [matchedOnly, setMatchedOnly] = useState(!isTender);
-  const selectedCategoryLabel = AUCTION_CATEGORIES.find((item) => item.key === auctionCategory)?.label || "منقول";
+  const availableCategories = [
+    ...(AUCTION_CATEGORIES_BY_GROUP[collectionGroup] || AUCTION_CATEGORIES_BY_GROUP.executive_agencies),
+    ...SHARED_AUCTION_CATEGORIES,
+  ];
+  const selectedCategoryLabel = availableCategories.find((item) => item.key === auctionCategory)?.label || "منقول";
+  // Clearance is a single Central Board feed shared by both owning collections.
+  const isSharedClearance = !isTender && auctionCategory === "clearance";
+  const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
   const [result, setResult] = useState({
     items: [],
     page: 1,
@@ -594,8 +650,9 @@ export default function Dashboard({ kind }) {
   const [filterDraft, setFilterDraft] = useState({ ...EMPTY_FILTERS });
   const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
   const [filtersOpen, setFiltersOpen] = useState(false);
-  const activeFilterCount = Object.values(appliedFilters).filter((value) => value !== "").length + Number(matchedOnly);
-  const canResetFilters = activeFilterCount > 0 || Object.values(filterDraft).some((value) => value !== "");
+  const isActiveFilter = ([key, value]) => value !== "" && !(key === "status" && value === "all");
+  const activeFilterCount = Object.entries(appliedFilters).filter(isActiveFilter).length + Number(matchedOnly);
+  const canResetFilters = activeFilterCount > 0 || Object.entries(filterDraft).some(isActiveFilter);
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
@@ -605,6 +662,8 @@ export default function Dashboard({ kind }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
+  const [collectionProgressDismissed, setCollectionProgressDismissed] = useState(false);
+  const dismissedCollectionRuns = useRef(new Set());
   const lastRefreshedRun = useRef(null);
   const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
@@ -619,7 +678,7 @@ export default function Dashboard({ kind }) {
         search,
         ...appliedFilters,
         matched_only: matchedOnly,
-        ...(!isTender ? { category: auctionCategory } : {}),
+        ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
         sortBy,
         sortDir,
         page: nextPage,
@@ -637,7 +696,7 @@ export default function Dashboard({ kind }) {
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
     }
-  }, [isTender, auctionCategory, matchedOnly, search, appliedFilters, sortBy, sortDir, pageSize]);
+  }, [isTender, auctionCategory, collectionGroup, matchedOnly, search, appliedFilters, sortBy, sortDir, pageSize]);
 
   useEffect(() => {
     loadPage(1);
@@ -645,11 +704,11 @@ export default function Dashboard({ kind }) {
 
   useEffect(() => {
     let active = true;
-    getCollectionStatus(kind, auctionCategory).then((status) => {
+    getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup).then((status) => {
       if (active) setCollectionState(status);
     }).catch(() => {});
     return () => { active = false; };
-  }, [kind, auctionCategory]);
+  }, [kind, auctionCategory, effectiveCollectionGroup]);
 
   useEffect(() => {
     if (!ACTIVE_STATES.has(collectionState.status)) return undefined;
@@ -659,7 +718,7 @@ export default function Dashboard({ kind }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind, auctionCategory);
+        const nextState = await getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup);
         if (cancelled) return;
         setCollectionState(nextState);
         const completedRunKey = nextState.finished_at || nextState.started_at;
@@ -703,7 +762,7 @@ export default function Dashboard({ kind }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, kind, auctionCategory, loadPage]);
+  }, [collectionState.status, kind, auctionCategory, effectiveCollectionGroup, loadPage]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -714,6 +773,9 @@ export default function Dashboard({ kind }) {
       : result.items.filter((item) => item.state === "PUBLISHED").length;
   const archiveStats = result.archive_stats || {};
   const collectionRunning = ACTIVE_STATES.has(collectionState.status);
+  const collectionRunKey = collectionState.finished_at || collectionState.started_at;
+  const isCollectionProgressDismissed = collectionProgressDismissed ||
+    Boolean(collectionRunKey && dismissedCollectionRuns.current.has(collectionRunKey));
 
   const columns = useMemo(() => {
     if (isTender) {
@@ -863,6 +925,28 @@ export default function Dashboard({ kind }) {
     setFiltersOpen(false);
     setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
     setCollectionState({ status: "idle" });
+    setCollectionProgressDismissed(false);
+    lastRefreshedRun.current = null;
+    lastNotifiedCollectionRun.current = null;
+  }
+
+  function handleCollectionGroupChange(nextGroup) {
+    if (nextGroup === collectionGroup) return;
+    lastRequestId.current += 1;
+    setCollectionGroup(nextGroup);
+    setSearch("");
+    setSearchInput("");
+    setFilterDraft({ ...EMPTY_FILTERS });
+    setAppliedFilters({ ...EMPTY_FILTERS });
+    setMatchedOnly(true);
+    setPage(1);
+    setSortBy("proposal_deadline");
+    setSortDir("asc");
+    setFiltersOpen(false);
+    setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
+    setCollectionState({ status: "idle" });
+    setCollectionProgressDismissed(false);
+    setError("");
     lastRefreshedRun.current = null;
     lastNotifiedCollectionRun.current = null;
   }
@@ -926,6 +1010,7 @@ export default function Dashboard({ kind }) {
 
   async function handleCollection() {
     setError("");
+    setCollectionProgressDismissed(false);
     const collectionLabel = isTender ? "مناقصه‌ها" : selectedCategoryLabel;
     const toastId = notifyToast(
       "loading",
@@ -933,7 +1018,7 @@ export default function Dashboard({ kind }) {
       { duration: 0 },
     );
     try {
-      const nextState = await startCollection(kind, auctionCategory);
+      const nextState = await startCollection(kind, auctionCategory, effectiveCollectionGroup);
       setCollectionState(nextState);
       notifyToast(
         "info",
@@ -967,7 +1052,7 @@ export default function Dashboard({ kind }) {
     search,
     ...appliedFilters,
     matched_only: matchedOnly,
-    ...(!isTender ? { category: auctionCategory } : {}),
+    ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
   };
@@ -996,7 +1081,9 @@ export default function Dashboard({ kind }) {
               <p>
                 {isTender
                   ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
-                  : "آگهی‌های " + selectedCategoryLabel + " از زیرسامانه مزایده‌های ستاد"}
+                  : isSharedClearance
+                    ? "آگهی‌های حراج از تابلوی مرکزی ستاد؛ منبع مشترک برای هر دو مجموعه"
+                    : "آگهی‌های " + selectedCategoryLabel + " از مجموعه " + (collectionGroup === "executive_agencies" ? "دستگاه‌های اجرایی" : "سازمان اموال تملیکی")}
               </p>
             </div>
             <div className="page-heading__actions">
@@ -1018,17 +1105,35 @@ export default function Dashboard({ kind }) {
                 >
                   {formatLastCollectionUpdate(collectionState.last_updated_at)}
                 </span>
-                <a className="button button--secondary collection-action-card__export" href={exportHref}>
-                  <ArrowDownToLine size={16} /> خروجی Excel
-                </a>
               </section>
             </div>
           </section>
 
           {!isTender && (
+            <section className="auction-source-selector" aria-label="انتخاب مجموعه یا منبع داده">
+              <div className="auction-source-selector__copy">
+                <strong>مجموعه آگهی</strong>
+                <small>منبع اصلی آگهی‌ها را انتخاب کن؛ حراج از تابلوی مرکزی و به‌صورت مشترک دریافت می‌شود.</small>
+              </div>
+              <div className="auction-source-selector__options" role="group" aria-label="مجموعه‌های مزایده">
+                {AUCTION_GROUPS.map(({ key, label }) => (
+                  <button
+                    key={key}
+                    type="button"
+                    className={"auction-source-selector__option " + (collectionGroup === key ? "auction-source-selector__option--active" : "")}
+                    aria-pressed={collectionGroup === key}
+                    onClick={() => handleCollectionGroupChange(key)}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </section>
+          )}
+          {!isTender && (
             <nav className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
               <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
-                {AUCTION_CATEGORIES.map(({ key, label }) => (
+                {availableCategories.map(({ key, label }) => (
                   <button
                     key={key}
                     role="tab"
@@ -1043,42 +1148,52 @@ export default function Dashboard({ kind }) {
               </div>
             </nav>
           )}
-          {!isTender && auctionCategory === "clearance" && (
+          {isSharedClearance && (
             <div className="auction-category-note">
-              حراج: فعلاً فقط آگهی‌های سازمان جمع‌آوری و فروش اموال تملیکی (شناسه ۵۳۱۵)
+              این حراج از تابلوی مرکزی ستاد دریافت می‌شود و برای هر دو مجموعه مشترک است؛ اطلاعات آن فقط یک‌بار جمع‌آوری و ذخیره می‌شود.
             </div>
           )}
-          <CollectionProgress state={collectionState} kind={kind} />
+          {!isCollectionProgressDismissed && (
+            <CollectionProgress
+              state={collectionState}
+              kind={kind}
+              onDismiss={() => {
+                if (collectionRunKey) dismissedCollectionRuns.current.add(collectionRunKey);
+                setCollectionProgressDismissed(true);
+              }}
+            />
+          )}
 
           <section className="stats-grid">
             <StatCard
               icon={isTender ? FileText : Gavel}
-              label="رکورد در نتایج"
+              label="رکورد در کل آرشیو"
               value={result.total}
-              hint={matchedOnly ? "فقط آگهی‌های مرتبط" : isTender ? "رکوردهای منطبق با فیلتر فعلی" : "همه آگهی‌های دسته انتخاب‌شده"}
+              pageLabel="نتایج با فیلتر فعلی"
+              hint={isTender ? "مجموع تمام مناقصه‌های ذخیره‌شده" : "مجموع آگهی‌های ذخیره‌شده در دسته و مجموعه انتخاب‌شده"}
               archiveValue={archiveStats.total}
             />
             <StatCard
               icon={MapPin}
-              label="استان در این صفحه"
+              label="استان در کل آرشیو"
               value={provinceCount}
-              hint="تعداد استان‌های متمایز در صفحه جاری"
+              hint="تعداد استان‌های متمایز در آرشیو"
               archiveValue={archiveStats.province_count}
               tone="violet"
             />
             <StatCard
               icon={Building2}
-              label="سازمان در این صفحه"
+              label="سازمان در کل آرشیو"
               value={organizationCount}
-              hint="تعداد سازمان‌های متمایز در صفحه جاری"
+              hint="تعداد سازمان‌های متمایز در آرشیو"
               archiveValue={archiveStats.organization_count}
               tone="teal"
             />
             <StatCard
               icon={CheckCircle2}
-              label={isTender ? "نوع فراخوان در این صفحه" : auctionCategory === "clearance" ? "مرتبط در این صفحه" : "منتشرشده در این صفحه"}
+              label={isTender ? "نوع فراخوان در کل آرشیو" : auctionCategory === "clearance" ? "آگهی مرتبط در کل آرشیو" : "آگهی منتشرشده در کل آرشیو"}
               value={fourthStat}
-              hint={isTender ? "تعداد انواع فراخوان متمایز" : auctionCategory === "clearance" ? "طبق کلیدواژه‌ها" : "تعداد آگهی‌های منتشرشده"}
+              hint={isTender ? "تعداد انواع فراخوان متمایز در آرشیو" : auctionCategory === "clearance" ? "تعداد آگهی‌های منطبق با کلیدواژه‌ها" : "تعداد آگهی‌های منتشرشده در آرشیو"}
               archiveValue={isTender ? archiveStats.type_count : auctionCategory === "clearance" ? archiveStats.matched_total : archiveStats.published_count}
               tone="amber"
             />
@@ -1086,7 +1201,7 @@ export default function Dashboard({ kind }) {
 
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
-            title={isTender ? "فهرست مناقصه‌ها" : "فهرست مزایده‌های " + selectedCategoryLabel}
+            title={isTender ? "فهرست مناقصه‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
             tag="داده قابل فیلتر"
             columns={columns}
             items={result.items}
@@ -1109,6 +1224,12 @@ export default function Dashboard({ kind }) {
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={handleSort}
+            headerActions={
+              <ExcelExportButton
+                href={exportHref}
+                filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
+              />
+            }
             advancedSearch={
               <FiltersPanel
                 kind={kind}

@@ -11,7 +11,10 @@ param(
     [int]$EndPage = 37,
 
     [ValidateSet("movable", "immovable", "rental", "minor", "clearance")]
-    [string]$Category = "movable"
+    [string]$Category = "movable",
+
+    [ValidateSet("executive_agencies", "amval_tamliki", "shared")]
+    [string]$Group
 )
 
 $ErrorActionPreference = "Stop"
@@ -41,7 +44,8 @@ function Show-Help {
     Write-Host "  .\setad.ps1 collect -StartPage 1 -EndPage 5"
     Write-Host "  .\setad.ps1 collect-tenders     Fetch all tender pages and import them"
     Write-Host "  .\setad.ps1 collect-category -Category rental"
-    Write-Host "  .\setad.ps1 collect-category -Category clearance"
+    Write-Host "  .\setad.ps1 collect-category -Category movable -Group amval_tamliki"
+    Write-Host "  .\setad.ps1 collect-category -Category clearance -Group shared"
     Write-Host "  .\setad.ps1 build                 Build images without starting services"
     Write-Host ""
 }
@@ -115,9 +119,30 @@ try {
             Write-Host "Movable auctions collected and imported." -ForegroundColor Green
         }
         "collect-category" {
-            New-Item -ItemType Directory -Force -Path ("data/raw/auctions/" + $Category) | Out-Null
+            if ($PSBoundParameters.ContainsKey("Group")) {
+                $EffectiveGroup = $Group
+            }
+            elseif ($Category -eq "clearance") {
+                $EffectiveGroup = "shared"
+            }
+            else {
+                $EffectiveGroup = "executive_agencies"
+            }
+
+            if ($EffectiveGroup -eq "executive_agencies") {
+                $RawCategoryPath = "data/raw/auctions/" + $Category
+            }
+            else {
+                $RawCategoryPath = "data/raw/auctions/" + $EffectiveGroup + "/" + $Category
+            }
+            New-Item -ItemType Directory -Force -Path $RawCategoryPath | Out-Null
             Invoke-Compose -ComposeArgs @("up", "-d", "--build")
-            $FetchArgs = @("run", "--rm", "api", "python", "-m", "setad_scope.collectors.fetch_auction_categories", "--category", $Category)
+
+            $FetchArgs = @(
+                "run", "--rm", "api", "python", "-m",
+                "setad_scope.collectors.fetch_auction_categories",
+                "--group", $EffectiveGroup, "--category", $Category
+            )
             if ($PSBoundParameters.ContainsKey("StartPage")) {
                 $FetchArgs += @("--start-page", $StartPage.ToString())
             }
@@ -125,8 +150,14 @@ try {
                 $FetchArgs += @("--end-page", $EndPage.ToString())
             }
             Invoke-Compose -ComposeArgs $FetchArgs
-            Invoke-Compose -ComposeArgs @("run", "--rm", "api", "python", "-m", "app.auction_category_jobs", "--category", $Category)
-            Write-Host ("Finished collecting " + $Category + " auctions.") -ForegroundColor Green
+
+            $ImportArgs = @(
+                "run", "--rm", "api", "python", "-m",
+                "app.auction_category_jobs",
+                "--group", $EffectiveGroup, "--category", $Category
+            )
+            Invoke-Compose -ComposeArgs $ImportArgs
+            Write-Host ("Finished collecting " + $EffectiveGroup + "/" + $Category + " auctions.") -ForegroundColor Green
         }
     }
 }

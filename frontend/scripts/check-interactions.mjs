@@ -14,6 +14,7 @@ const transitionCss = read("src/components/ThemeTransition.css");
 const redesign = read("src/styles/redesign.css");
 const settings = read("src/pages/Settings.jsx");
 const topbar = read("src/components/Topbar.jsx");
+const globalCollection = read("src/components/GlobalCollectionControl.jsx");
 const sidebar = read("src/components/Sidebar.jsx");
 
 // One keyword-relevance control, on both auction/tender pages,
@@ -70,20 +71,27 @@ assert.match(app, /pathname\.startsWith\("\/search"\)/);
 assert.match(app, /<GlobalSearchPage key=\{routeVersion\}/);
 assert.match(app, /<Topbar/);
 assert.match(topbar, /<GlobalSearchBar onNavigate=\{onNavigate\} initialQuery=\{initialQuery\}/);
+assert.ok(topbar.includes('<GlobalCollectionControl apiOnline={apiOnline} />'));
+assert.match(globalCollection, /role="dialog"/);
+assert.match(globalCollection, /getGlobalCollectionStatus/);
+assert.match(globalCollection, /startGlobalCollection/);
+assert.match(globalCollection, /failed_sources/);
+assert.match(globalCollection, /منبع/);
 assert.match(topbar, /اتصال به سرور برقرار است/);
 
-// Header layout uses symmetric side tracks around a dedicated centered search slot.
-// Smaller viewports move search to its own row instead of redistributing the header.
-const topbarLayoutStart = redesign.indexOf("/* Three fixed header zones:");
-const topbarResponsiveStart = redesign.indexOf("/* Below desktop widths", topbarLayoutStart);
+// The global refresh control stays beside search in a dedicated, stable header zone.
+// At narrower widths, search and refresh share their own row below breadcrumb/actions.
+const topbarLayoutStart = redesign.indexOf("/* Four stable header zones:");
+const topbarResponsiveStart = redesign.indexOf("/* Keep the search and global refresh adjacent", topbarLayoutStart);
 assert.ok(topbarLayoutStart >= 0 && topbarResponsiveStart > topbarLayoutStart);
 const desktopTopbarLayout = redesign.slice(topbarLayoutStart, topbarResponsiveStart);
 const responsiveTopbarLayout = redesign.slice(topbarResponsiveStart, redesign.indexOf("/* Unified, fixed-footprint collection/export action card.", topbarResponsiveStart));
 assert.match(desktopTopbarLayout, /display:\s*grid/);
-assert.match(desktopTopbarLayout, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 470px\) minmax\(0, 1fr\)/);
-assert.match(desktopTopbarLayout, /grid-template-areas:\s*"breadcrumb search actions"/);
+assert.match(desktopTopbarLayout, /grid-template-columns:\s*minmax\(0, 1fr\) minmax\(0, 470px\) auto minmax\(0, 1fr\)/);
+assert.match(desktopTopbarLayout, /grid-template-areas:\s*"breadcrumb search global-collection actions"/);
 assert.match(desktopTopbarLayout, /\.topbar > \.global-search-bar\s*\{[^}]*grid-area:\s*search/s);
-assert.match(responsiveTopbarLayout, /grid-template-areas:\s*"breadcrumb actions"\s*"search search"/);
+assert.match(desktopTopbarLayout, /\.global-collection-control\s*\{[^}]*grid-area:\s*global-collection/s);
+assert.match(responsiveTopbarLayout, /grid-template-areas:\s*"breadcrumb actions"\s*"search global-collection"/);
 assert.doesNotMatch(dashboard, /<header className="topbar"/);
 assert.doesNotMatch(settings, /<header className="topbar"/);
 assert.doesNotMatch(globalSearchPage, /<header className="topbar"/);
@@ -97,6 +105,8 @@ assert.match(globalSearchBar, /Ctrl K/);
 assert.match(globalSearchBar, /onNavigate\(query \? "\/search\?q="/);
 assert.match(globalSearchBar, /event\.key\.toLowerCase\(\) === "k"/);
 assert.match(api, /api\.get\("\/api\/search"/);
+assert.ok(api.includes('api.post("/api/collection/global/run")'));
+assert.ok(api.includes('api.get("/api/collection/global/status")'));
 assert.match(searchApi, /@router\.get\("\/api\/search"\)/);
 assert.match(searchApi, /union_all\(auction_query, tender_query\)/);
 assert.match(globalSearchPage, /kind === "all"/);
