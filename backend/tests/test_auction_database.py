@@ -111,6 +111,8 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 first = import_auction_pages(db, [path], category)
                 second = import_auction_pages(db, [path], category)
                 assert first["stored"] == 1 and second["stored"] == 1
+                assert first["changed"] == 1 and first["unchanged"] == 0
+                assert second["changed"] == 0 and second["unchanged"] == 1
 
                 db_rows = db.scalars(
                     select(Auction).where(Auction.source == SOURCES[category])
@@ -355,6 +357,11 @@ def test_tender_relevance_filter_and_export_share_same_dataset(tmp_path):
         try:
             result = import_tender_pages(db, [raw])
             assert result["stored"] == 2
+            assert result["changed"] == 2 and result["unchanged"] == 0
+
+            unchanged = import_tender_pages(db, [raw])
+            assert unchanged["stored"] == 2
+            assert unchanged["changed"] == 0 and unchanged["unchanged"] == 2
 
             client = TestClient(app)
             collection_status = client.get("/api/collection/tenders/status")
