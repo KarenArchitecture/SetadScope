@@ -25,8 +25,8 @@ export default function ExcelExportButton({
     requestRef.current = request;
     setProgress({ status: "preparing", percent: null, error: "" });
 
-    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\\/$/, "");
-    const requestUrl = /^https?:\\/\\//i.test(href) ? href : apiBaseUrl + href;
+    const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
+    const requestUrl = /^https?:\/\//i.test(href) ? href : apiBaseUrl + href;
     request.open("GET", requestUrl, true);
     request.responseType = "blob";
     request.setRequestHeader(
