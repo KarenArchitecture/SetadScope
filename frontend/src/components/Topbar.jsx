@@ -1,4 +1,5 @@
 import GlobalSearchBar from "./GlobalSearchBar";
+import GlobalCollectionControl from "./GlobalCollectionControl";
 import ThemeToggle from "./ThemeToggle";
 
 const PAGE_TITLES = {
@@ -22,6 +23,7 @@ export default function Topbar({
         SetadScope <span>‹</span> {PAGE_TITLES[page] || PAGE_TITLES.auctions}
       </div>
       <GlobalSearchBar onNavigate={onNavigate} initialQuery={initialQuery} />
+      <GlobalCollectionControl apiOnline={apiOnline} />
       <div className="topbar__actions">
         <div
           className={"connection-status " + (apiOnline ? "connection-status--online" : "connection-status--offline")}
