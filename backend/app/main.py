@@ -842,7 +842,10 @@ def export_auctions(
     return StreamingResponse(
         data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": "attachment; filename=setadscope_auctions.xlsx"},
+        headers={
+            "Content-Disposition": "attachment; filename=setadscope_auctions.xlsx",
+            "Content-Length": str(data.getbuffer().nbytes),
+        },
     )
 
 
