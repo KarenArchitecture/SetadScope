@@ -26,6 +26,7 @@ import {
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
 import ExcelExportButton from "../components/ExcelExportButton";
+import DeadlineStatusSelect from "../components/DeadlineStatusSelect";
 import JalaliDatePicker from "../components/JalaliDatePicker";
 import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
@@ -370,11 +371,10 @@ function FiltersPanel({
               </FilterField>
 
               <FilterField label="وضعیت مهلت">
-                <select value={filters.status || "all"} onChange={(event) => onChange("status", event.target.value)}>
-                  <option value="all">همه مهلت‌ها</option>
-                  <option value="active">دارای مهلت</option>
-                  <option value="archive">مهلت تمام‌شده</option>
-                </select>
+                <DeadlineStatusSelect
+                  value={filters.status}
+                  onChange={(value) => onChange("status", value)}
+                />
               </FilterField>
 
               <FilterField label="وضعیت آگهی">
