@@ -50,9 +50,9 @@ def build_excel(
 
     alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
     header_fill = PatternFill("solid", fgColor="24466E")
-    header_font = Font(name="Vazirmatn", size=13, bold=True, color="FFFFFF")
-    body_font = Font(name="Vazirmatn", size=12, bold=True, color="253B53")
-    link_font = Font(name="Vazirmatn", size=12, bold=True, color="2767A4", underline="single")
+    header_font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    body_font = Font(name="Calibri", size=12, bold=True, color="253B53")
+    link_font = Font(name="Calibri", size=12, bold=True, color="2767A4", underline="single")
     for cell in sheet[1]:
         cell.fill = header_fill
         cell.font = header_font
@@ -96,7 +96,7 @@ def build_excel(
         sheet.row_dimensions[row_index].height = 30 + (visible_lines - 1) * 18
 
     for index, (measured, cap) in enumerate(zip(observed_widths, maximum_widths), start=1):
-        # Vazirmatn 12pt bold needs a little extra width compared with the default font.
+        # Calibri 12pt bold needs a little extra width compared with the default font.
         sheet.column_dimensions[get_column_letter(index)].width = min(
             cap, max(12, ceil(measured * 1.12)),
         )

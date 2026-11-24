@@ -6,7 +6,7 @@ import subprocess
 import sys
 import threading
 from collections import deque
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.raw_cleanup import prune_previous_runs
 from app.db.models import Auction, AppSetting, IngestionRun
-from app.services.date_normalization import persian_timestamp
+from app.services.date_normalization import TEHRAN, persian_timestamp
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
@@ -937,7 +937,27 @@ def start_quick(kind: QuickKind, background_tasks: BackgroundTasks):
     key = f"quick:{kind}"
     state = reserve_collection_batch(key, initial_global_collection_state(total_sources=len(sources)),
                                      include_tenders=kind == "tenders")
-    background_tasks.add_task(run_collection_batch, key, sources)
+    now = datetime.now(timezone.utc)
+    cutoff = max(now - timedelta(minutes=15), now.astimezone(TEHRAN).replace(
+        hour=0, minute=0, second=0, microsecond=0,
+    ))
+    pending = []
+    with collection_lock:
+        batch = collection_states[key]
+        for source in sources:
+            previous = collection_states[global_source_state_key(source)]
+            finished = previous.get("finished_at")
+            if previous["status"] != "completed" or not finished or datetime.fromisoformat(finished) < cutoff:
+                pending.append(source)
+        batch["reused_sources"] = len(sources) - len(pending)
+        batch["total_sources"] = len(pending)
+        if not pending:
+            batch.update(status="completed", phase="completed", finished_at=now.isoformat(),
+                         overall_progress_percent=100, progress_percent=100,
+                         message="داده‌ها تازه‌اند. در حال تهیه اکسل از داده‌های ثبت‌شده…")
+        state = dict(batch)
+    if pending:
+        background_tasks.add_task(run_collection_batch, key, tuple(pending))
     return state
 
 

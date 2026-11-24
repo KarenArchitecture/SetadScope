@@ -24,6 +24,7 @@ export default function QuickActions({ visible }) {
   const terminal = ["completed", "completed_with_errors", "cancelled"].includes(state?.status);
   const action = actions[job?.kind];
   const starting = useRef(false);
+  const confirmation = useRef(null);
 
   useEffect(() => {
     if (!job?.id || terminal) return;
@@ -77,10 +78,13 @@ export default function QuickActions({ visible }) {
     }
   }, [stopping, terminal]);
 
-  async function close() {
+  async function close(confirmed = false) {
     if (starting.current || stopping) return;
     if (job && !exportDone && state?.status !== "cancelled") {
-      if (!window.confirm("عملیات متوقف شود؟")) return;
+      if (confirmed !== true) {
+        confirmation.current.showModal();
+        return;
+      }
       if (!terminal) {
         setStopping(true);
         try {
@@ -106,11 +110,20 @@ export default function QuickActions({ visible }) {
       <button className="quick-close" onClick={() => { modal.current.close(); setMini(true); }} aria-label="کوچک کردن"><Minus size={18}/></button>
       <h2 id="quick-title">{action?.title}</h2>
       <p role="status">{error || (stopping && "در حال توقف عملیات…") || state?.message || "در حال شروع عملیات…"}</p>
+      {state?.reused_sources > 0 && <p>{fa(state.reused_sources)} منبع در ۱۵ دقیقهٔ اخیر به‌روز شده و از دادهٔ ذخیره‌شده استفاده شد.</p>}
       {state?.total_sources > 0 && <><progress max="100" value={state.overall_progress_percent}/><p>{fa(state.completed_sources)} از {fa(state.total_sources)} منبع · {fa(state.overall_progress_percent)}٪</p></>}
       {state?.failed_sources?.map(s => <p key={s.key}>{s.label} · {s.error}</p>)}
       {!stopping && terminal && state.status !== "cancelled" && action && <><p>{state.failed_sources?.length > 0 && "گزارش ناقص است."}</p>
         <ExcelExportButton autoStart={!exportDone} onComplete={() => { setExportDone(true); sessionStorage.removeItem(key); }}
           href={"/api/" + job.kind + "/export.xlsx?" + action.filters + "&matched_only=false&sort_by=announcement_at&sort_dir=desc"}
           filename={action.title + ".xlsx"} /></>}
+    </dialog>
+    <dialog ref={confirmation} aria-labelledby="quick-stop-title">
+      <h2 id="quick-stop-title">عملیات متوقف شود؟</h2>
+      <p>{action?.title}</p>
+      <div className="quick-confirm-actions">
+        <button className="button button--secondary" autoFocus onClick={() => confirmation.current.close()}>ادامهٔ عملیات</button>
+        <button className="button button--primary" onClick={() => { confirmation.current.close(); close(true); }}>توقف عملیات</button>
+      </div>
     </dialog></div>;
 }

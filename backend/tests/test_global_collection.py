@@ -258,3 +258,23 @@ def test_quick_stop_terminates_current_process_and_skips_remaining_sources(monke
         assert main.quick_status("auctions")["status"] == "cancelled"
     finally:
         _restore_states(snapshot)
+
+
+def test_quick_export_reuses_only_recent_success(monkeypatch):
+    snapshot = _snapshot_states()
+    try:
+        source = main.collection_states["tenders"]
+        now = main.datetime.now(main.timezone.utc)
+        source.update(status="completed", finished_at=now.isoformat())
+        tasks = BackgroundTasks()
+        result = main.start_quick("tenders", tasks)
+        assert result["status"] == "completed" and result["reused_sources"] == 1
+        assert not tasks.tasks
+        for status, age in [("failed", 0), ("completed", 16)]:
+            source.update(status=status, finished_at=(now - main.timedelta(minutes=age)).isoformat())
+            tasks = BackgroundTasks()
+            assert main.start_quick("tenders", tasks)["reused_sources"] == 0
+            assert len(tasks.tasks) == 1
+            main.collection_states["quick:tenders"]["status"] = "completed"
+    finally:
+        _restore_states(snapshot)

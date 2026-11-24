@@ -29,10 +29,10 @@ def test_excel_table_filters_and_numeric_cells():
     assert sheet["C2"].value == 190000.5
     # Width follows actual content instead of the configured maximum (45).
     assert 12 <= sheet.column_dimensions["B"].width < 45
-    assert sheet["A1"].font.name == "Vazirmatn"
+    assert sheet["A1"].font.name == "Calibri"
     assert sheet["A1"].font.sz == 13
     assert sheet["A1"].font.bold is True
-    assert sheet["B2"].font.name == "Vazirmatn"
+    assert sheet["B2"].font.name == "Calibri"
     assert sheet["B2"].font.sz == 12
     assert sheet["B2"].font.bold is True
     assert sheet["B2"].alignment.wrap_text is True
