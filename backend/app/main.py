@@ -1,4 +1,5 @@
 from __future__ import annotations
+import logging
 import json
 import os
 import subprocess
@@ -15,6 +16,7 @@ from pydantic import BaseModel
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
+from app.raw_cleanup import prune_previous_runs
 from app.db.models import Auction, AppSetting, IngestionRun
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
@@ -410,6 +412,11 @@ def run_collection_job(
                     collection_group=group,
                     incomplete_reason=reason if incomplete else None,
                 )
+
+        try:
+            totals["raw_files_removed"] = prune_previous_runs(files, partial=incomplete)
+        except OSError:
+            logging.getLogger(__name__).exception("Raw cleanup failed for %s", state_key)
 
         records_fetched = int(totals.get("fetched", 0))
         records_stored = int(totals.get("stored", 0))
