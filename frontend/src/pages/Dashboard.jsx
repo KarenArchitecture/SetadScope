@@ -578,7 +578,8 @@ export default function Dashboard({ kind }) {
               ? "جمع‌آوری " + collectionLabel + " با موفقیت انجام شد. " + stored + " رکورد ذخیره شد."
               : "جمع‌آوری " + collectionLabel + " ناموفق بود. جزئیات در پنل وضعیت اجرا قابل مشاهده است.";
           notifyToast(nextState.status === "completed" ? "success" : "error", message, { duration: 5500 });
-          if (nextState.status !== "failed" && lastRefreshedRun.current !== completedRunKey) {
+          const hasSavedData = nextState.status !== "failed" || nextState.records_stored > 0;
+          if (hasSavedData && lastRefreshedRun.current !== completedRunKey) {
             lastRefreshedRun.current = completedRunKey;
             await loadPage(1);
           }

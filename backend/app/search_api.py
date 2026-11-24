@@ -6,10 +6,10 @@ from decimal import Decimal
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import DateTime, Numeric, String, Text, cast, func, literal, or_, select, union_all
+from sqlalchemy import func, or_, select, union_all
 from sqlalchemy.orm import Session
 
-from app.db.models import Auction, Tender
+from app.listing_types import LISTING_TYPES
 from app.db.session import get_db
 from app.excel_api import ExportProgress, excel_download, track_excel_export
 from app.services.listing_filters import announced_today, date_range
@@ -100,110 +100,28 @@ def _searchable_rows(
     matched_only: bool,
     collection_group: str,
 ):
-    auction_query = select(
-        literal("auction").label("record_type"),
-        Auction.id.label("record_id"),
-        Auction.source.label("source"),
-        Auction.collection_group.label("collection_group"),
-        Auction.category.label("category"),
-        cast(literal(None), String).label("type_name"),
-        func.coalesce(Auction.title, Auction.item_title).label("title"),
-        func.coalesce(
-            Auction.auction_no,
-            Auction.auction_reference_no,
-            Auction.source_party_id,
-        ).label("record_number"),
-        Auction.organization.label("organization"),
-        Auction.province.label("province"),
-        Auction.city.label("city"),
-        cast(Auction.state, Text).label("state"),
-        func.coalesce(Auction.site_show_start_at, Auction.publish_start_at).label("announcement_at"),
-        Auction.proposal_deadline.label("deadline_at"),
-        cast(literal(None), DateTime(timezone=True)).label("documents_deadline_at"),
-        Auction.base_total_price.label("base_total_price"),
-        Auction.money_unit.label("money_unit"),
-        Auction.has_keyword_match.label("has_keyword_match"),
-    )
-    tender_query = select(
-        literal("tender").label("record_type"),
-        Tender.id.label("record_id"),
-        Tender.source.label("source"),
-        literal(None, type_=String(32)).label("collection_group"),
-        literal(None, type_=String(24)).label("category"),
-        Tender.type_name.label("type_name"),
-        Tender.title.label("title"),
-        func.coalesce(Tender.tender_number, Tender.source_tender_id).label("record_number"),
-        Tender.organization.label("organization"),
-        Tender.province.label("province"),
-        Tender.city.label("city"),
-        cast(Tender.state, Text).label("state"),
-        Tender.public_notification_at.label("announcement_at"),
-        Tender.proposal_deadline_at.label("deadline_at"),
-        Tender.documents_deadline_at.label("documents_deadline_at"),
-        literal(None, type_=Numeric(24, 2)).label("base_total_price"),
-        literal(None, type_=String(30)).label("money_unit"),
-        Tender.has_keyword_match.label("has_keyword_match"),
-    )
-
-    if source:
-        auction_query = auction_query.where(Auction.source == source)
-        tender_query = tender_query.where(Tender.source == source)
+    projections = []
+    for listing in LISTING_TYPES.values():
+        query = listing.project()
+        if search and search.strip():
+            term = f"%{search.strip()}%"
+            query = query.where(or_(*(field.ilike(term) for field in listing.search_fields)))
+        projections.append(query)
+    rows = union_all(*projections).subquery()
+    columns = rows.c
+    query = select(rows)
+    for field, value in (("source", source), ("province", province), ("city", city), ("category", category)):
+        if value:
+            query = query.where(columns[field] == value)
     if collection_group != "all":
-        auction_query = auction_query.where(Auction.collection_group == collection_group)
-        tender_query = tender_query.where(False)
-    if province:
-        auction_query = auction_query.where(Auction.province == province)
-        tender_query = tender_query.where(Tender.province == province)
-    if city:
-        auction_query = auction_query.where(Auction.city == city)
-        tender_query = tender_query.where(Tender.city == city)
-    if category:
-        auction_query = auction_query.where(Auction.category == category)
-        tender_query = tender_query.where(False)
+        query = query.where(columns.collection_group == collection_group)
     if matched_only:
-        auction_query = auction_query.where(Auction.has_keyword_match.is_(True))
-        tender_query = tender_query.where(Tender.has_keyword_match.is_(True))
-
+        query = query.where(columns.has_keyword_match.is_(True))
     if status != "all":
         now = datetime.now(timezone.utc)
-        if status == "active":
-            auction_query = auction_query.where(Auction.proposal_deadline > now)
-            tender_query = tender_query.where(Tender.proposal_deadline_at > now)
-        else:
-            auction_query = auction_query.where(Auction.proposal_deadline <= now)
-            tender_query = tender_query.where(Tender.proposal_deadline_at <= now)
-
-    if search and search.strip():
-        term = f"%{search.strip()}%"
-        auction_query = auction_query.where(
-            or_(
-                Auction.title.ilike(term),
-                Auction.description.ilike(term),
-                Auction.organization.ilike(term),
-                Auction.province.ilike(term),
-                Auction.city.ilike(term),
-                Auction.auction_no.ilike(term),
-                Auction.auction_reference_no.ilike(term),
-                Auction.source_party_id.ilike(term),
-                Auction.item_title.ilike(term),
-                Auction.item_reference_no.ilike(term),
-                Auction.asset_type.ilike(term),
-            )
-        )
-        tender_query = tender_query.where(
-            or_(
-                Tender.title.ilike(term),
-                Tender.description.ilike(term),
-                Tender.tender_number.ilike(term),
-                Tender.source_tender_id.ilike(term),
-                Tender.type_name.ilike(term),
-                Tender.organization.ilike(term),
-                Tender.province.ilike(term),
-                Tender.city.ilike(term),
-            )
-        )
-
-    return union_all(auction_query, tender_query).subquery("global_listings")
+        deadline = columns.deadline_at
+        query = query.where(deadline > now if status == "active" else deadline <= now)
+    return query.subquery("global_listings")
 
 
 def excel_safe(value):
@@ -215,7 +133,7 @@ def excel_safe(value):
 @router.get("/api/search")
 def global_search(
     search: str | None = None,
-    kind: Literal["all", "auction", "tender"] = "all",
+    kind: str = "all",
     source: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
     province: str | None = None,
@@ -230,6 +148,8 @@ def global_search(
     advanced: AdvancedSearchFilters = Depends(),
     db: Session = Depends(get_db),
 ):
+    if kind != "all" and kind not in LISTING_TYPES:
+        raise HTTPException(status_code=422, detail="Unsupported listing type")
     if sort_by not in SORT_COLUMNS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
     if collection_group != "all" and category is not None:
@@ -254,15 +174,14 @@ def global_search(
         .group_by(summary_rows.c.record_type)
     )
     counts = dict(db.execute(summary_query).all())
-    auction_count = counts.get("auction", 0)
-    tender_count = counts.get("tender", 0)
+    summary = {config.count_key: counts.get(key, 0) for key, config in LISTING_TYPES.items()}
 
     if kind != "all":
         base = base.where(rows.c.record_type == kind)
     if category is not None:
         total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     else:
-        total = auction_count + tender_count if kind == "all" else counts.get(kind, 0)
+        total = sum(summary.values()) if kind == "all" else counts.get(kind, 0)
 
     column = rows.c[SORT_COLUMNS[sort_by]]
     if sort_by == "category":
@@ -274,14 +193,8 @@ def global_search(
         .limit(page_size)
     ).mappings().all()
 
-    sources_query = union_all(
-        select(Auction.source.label("source")),
-        select(Tender.source.label("source")),
-    ).subquery()
-    source_values = db.scalars(
-        select(sources_query.c.source).distinct().order_by(sources_query.c.source)
-    ).all()
     options_rows = _searchable_rows(None, None, None, None, None, "all", False, "all").c
+    source_values = db.scalars(select(options_rows.source).distinct().order_by(options_rows.source)).all()
     scope = [options_rows.record_type == kind] if kind != "all" else []
     province_values = db.scalars(
         select(options_rows.province).where(*scope, options_rows.province.is_not(None))
@@ -297,16 +210,16 @@ def global_search(
         .distinct().order_by(options_rows.state)
     ).all()
     types = db.scalars(
-        select(Tender.type_name).where(Tender.type_name.is_not(None))
-        .distinct().order_by(Tender.type_name)
-    ).all() if kind != "auction" else []
+        select(options_rows.type_name).where(*scope, options_rows.type_name.is_not(None))
+        .distinct().order_by(options_rows.type_name)
+    ).all()
 
     items = []
     for row in records:
         item = dict(row)
         item["id"] = item["record_id"]
         item["row_key"] = f'{item["record_type"]}:{item["record_id"]}'
-        item["record_type_label"] = "مزایده" if item["record_type"] == "auction" else "مناقصه"
+        item["record_type_label"] = LISTING_TYPES[item["record_type"]].label
         item["collection_group_label"] = {
             "executive_agencies": "دستگاه‌های اجرایی",
             "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
@@ -323,8 +236,13 @@ def global_search(
         item["category_label"] = AUCTION_CATEGORIES.get(item["category"]) or item["type_name"] or "—"
         items.append(item)
 
-    archive_auction_count = db.scalar(select(func.count(Auction.id))) or 0
-    archive_tender_count = db.scalar(select(func.count(Tender.id))) or 0
+    archive_counts = dict(db.execute(
+        select(options_rows.record_type, func.count()).group_by(options_rows.record_type)
+    ).all())
+    archive_summary = {
+        config.count_key: archive_counts.get(key, 0)
+        for key, config in LISTING_TYPES.items()
+    }
 
     return {
         "items": items,
@@ -332,16 +250,8 @@ def global_search(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
-        "summary": {
-            "all": auction_count + tender_count,
-            "auctions": auction_count,
-            "tenders": tender_count,
-        },
-        "archive_summary": {
-            "all": archive_auction_count + archive_tender_count,
-            "auctions": archive_auction_count,
-            "tenders": archive_tender_count,
-        },
+        "summary": {"all": sum(summary.values()), **summary},
+        "archive_summary": {"all": sum(archive_summary.values()), **archive_summary},
         "filter_options": {
             "sources": [
                 {"value": value, "label": SOURCE_LABELS.get(value, value)}
@@ -367,7 +277,7 @@ def global_search(
 @router.get("/api/search/export.xlsx")
 def export_global_search(
     search: str | None = None,
-    kind: Literal["all", "auction", "tender"] = "all",
+    kind: str = "all",
     source: str | None = None,
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
     province: str | None = None,
@@ -381,6 +291,8 @@ def export_global_search(
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
+    if kind != "all" and kind not in LISTING_TYPES:
+        raise HTTPException(status_code=422, detail="Unsupported listing type")
     if sort_by not in SORT_COLUMNS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
     if collection_group != "all" and category is not None:
@@ -426,7 +338,7 @@ def export_global_search(
             deadline_at = row["deadline_at"]
             yield [
                 row["record_id"],
-                "مزایده" if record_type == "auction" else "مناقصه",
+                LISTING_TYPES[record_type].label,
                 group_labels.get(row.get("collection_group"), "—"),
                 AUCTION_CATEGORIES.get(row.get("category"), "—"),
                 excel_safe(source_label),

@@ -636,3 +636,89 @@ def test_global_advanced_tender_filters_match_excel():
             db.rollback()
             db.execute(delete(Tender).where(Tender.source_tender_id.in_(ids)))
             db.commit()
+
+
+def test_partial_clearance_is_imported_without_marking_collection_successful(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app import main
+
+    payload = tmp_path / "clearance_page_0.json"
+    payload.write_text(json.dumps({"content": [{"cartId": 73998881, "title": "Partial clearance"}]}))
+    manifest = tmp_path / "clearance_partial_fixture.json"
+    manifest.write_text(json.dumps({
+        "category": "clearance",
+        "collection_group": "shared",
+        "complete_source": False,
+        "pages": [{"file": payload.name}],
+    }))
+    monkeypatch.setattr("app.auction_category_jobs.category_raw_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(main.subprocess, "Popen", lambda *_, **__: SimpleNamespace(
+        stdout=[
+            'PROGRESS_JSON:{"pages_completed":1,"total_pages":10,"progress_percent":8}',
+            "PARTIAL_MANIFEST:" + manifest.name,
+            "FETCH FAILED: shared/clearance: HTTP 428",
+        ],
+        wait=lambda: 1,
+    ))
+    key = main.collection_state_key("shared", "clearance")
+    monkeypatch.setitem(main.collection_states, key, main.initial_collection_state("auctions", "shared", "clearance"))
+
+    with SessionLocal() as db:
+        original_runs = set(db.scalars(select(IngestionRun.id)).all())
+        try:
+            main.run_collection_job("auctions", "shared", "clearance")
+            state = main.collection_states[key]
+            assert state["status"] == "failed"
+            assert state["records_stored"] == 1
+            assert state["progress_percent"] == 8
+            assert "HTTP 428" in state["error"]
+            assert db.scalar(select(Auction.id).where(Auction.source_party_id == "73998881"))
+            run = db.scalar(select(IngestionRun).where(IngestionRun.id.not_in(original_runs)))
+            assert run.status == "failed"
+            assert run.stored == 1
+        finally:
+            db.execute(delete(Auction).where(Auction.source_party_id == "73998881"))
+            db.execute(delete(IngestionRun).where(IngestionRun.id.not_in(original_runs)))
+            db.commit()
+
+
+def test_registered_listing_type_appears_in_search_and_excel(monkeypatch):
+    from dataclasses import replace
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from sqlalchemy import literal
+    from app.listing_types import LISTING_TYPES
+
+    auction = LISTING_TYPES["auction"]
+
+    def quote_rows():
+        query = auction.project()
+        _, *columns = query.selected_columns
+        return query.with_only_columns(
+            literal("quote").label("record_type"), *columns,
+        ).where(Auction.source_party_id == "quote-fixture")
+
+    monkeypatch.setitem(LISTING_TYPES, "quote", replace(
+        auction, label="استعلام بها", count_key="quotes", project=quote_rows,
+    ))
+    with SessionLocal() as db, TestClient(app) as client:
+        db.add(Auction(
+            source="setad_main_estate", source_party_id="quote-fixture",
+            collection_group="executive_agencies", category="movable",
+            title="Sample quote", raw_payload={}, matched_keywords=[],
+        ))
+        db.commit()
+        try:
+            response = client.get("/api/search", params={"kind": "quote"})
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["summary"]["quotes"] == body["archive_summary"]["quotes"] == 1
+            assert [item["record_type_label"] for item in body["items"]] == ["استعلام بها"]
+
+            response = client.get("/api/search/export.xlsx", params={"kind": "quote"})
+            assert response.status_code == 200, response.text
+            rows = list(load_workbook(BytesIO(response.content)).active.values)
+            assert [row[1] for row in rows[1:]] == ["استعلام بها"]
+        finally:
+            db.execute(delete(Auction).where(Auction.source_party_id == "quote-fixture"))
+            db.commit()

@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Building2, Gavel, Search as SearchIcon } from "lucide-react";
+import { Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
 import ExcelExportButton from "../components/ExcelExportButton";
 import FiltersPanel from "../components/FiltersPanel";
 import useListingFilters from "../hooks/useListingFilters";
 import { notifyToast } from "../utils/toast";
-import { DetailModal } from "./Dashboard";
-import { getAuctionById, getGlobalSearch, getTenderById, listingQueryParams } from "../services/api";
+import { defaultListing, listingByKey, listingTypes } from "../listingTypes";
+import { getGlobalSearch, listingQueryParams } from "../services/api";
 import "./Dashboard.css";
 import "../styles/redesign.css";
 import "./GlobalSearchPage.css";
@@ -49,11 +49,12 @@ function displayState(value) {
   return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
 }
 
-function TypeBadge({ kind }) {
+function TypeBadge({ kind, label }) {
+  const Icon = listingByKey[kind]?.badgeIcon;
   return (
     <span className={"global-result-type global-result-type--" + kind}>
-      {kind === "auction" ? <Gavel size={13} /> : <Building2 size={13} />}
-      {kind === "auction" ? "مزایده" : "مناقصه"}
+      {Icon && <Icon size={13} />}
+      {label || listingByKey[kind]?.label || kind}
     </span>
   );
 }
@@ -77,7 +78,9 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
   const [error, setError] = useState("");
   const { params: filterParams, panel: filterPanel, resetFields } = useListingFilters(setError);
   const [selectedRecord, setSelectedRecord] = useState(null);
-  const [detailKind, setDetailKind] = useState("auctions");
+  const [detailType, setDetailType] = useState(defaultListing);
+  const { Details } = detailType;
+  const activeType = listingByKey[kind];
   const [detailLoading, setDetailLoading] = useState(false);
   const lastRequestId = useRef(0);
 
@@ -134,7 +137,7 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
       label: "نوع معامله",
       sortable: true,
       sortKey: "record_type",
-      render: (item) => <TypeBadge kind={item.record_type} />,
+      render: (item) => <TypeBadge kind={item.record_type} label={item.record_type_label} />,
     },
     {
       key: "category_label",
@@ -166,7 +169,7 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
       className: "date-cell",
       render: (item) => formatDate(item.announcement_at),
     },
-    ...(kind !== "auction" ? [{
+    ...((!activeType || activeType.showDocumentsDeadline) ? [{
       key: "documents_deadline_at",
       label: "مهلت اسناد",
       sortable: true,
@@ -207,16 +210,16 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
         </span>
       ),
     },
-  ], [kind]);
+  ], [activeType]);
 
   async function openDetails(id, item) {
+    const listing = listingByKey[item.record_type];
+    if (!listing) return;
     setSelectedRecord(null);
-    setDetailKind(item.record_type === "tender" ? "tenders" : "auctions");
+    setDetailType(listing);
     setDetailLoading(true);
     try {
-      const record = item.record_type === "tender"
-        ? await getTenderById(id)
-        : await getAuctionById(id);
+      const record = await listing.getDetails(id);
       setSelectedRecord(record);
     } catch {
       setError("دریافت جزئیات این معامله ناموفق بود.");
@@ -242,15 +245,11 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
   function changeKind(nextKind) {
     if (kind === nextKind) return;
     setKind(nextKind);
-    if (nextKind === "tender") {
-      resetFields(["collection_group", "price_min", "price_max"]);
-    }
-    if (nextKind === "auction") {
-      resetFields(["type_name", "documents_deadline_from", "documents_deadline_to"]);
-      if (sortBy === "documents_deadline_at") {
-        setSortBy("announcement_at");
-        setSortDir("desc");
-      }
+    const nextType = listingByKey[nextKind];
+    if (nextType?.excludedFilters?.length) resetFields(nextType.excludedFilters);
+    if (nextType && !nextType.showDocumentsDeadline && sortBy === "documents_deadline_at") {
+      setSortBy("announcement_at");
+      setSortDir("desc");
     }
     setPage(1);
   }
@@ -284,8 +283,8 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
               <h1>همه آگهی‌ها</h1>
               <p>
                 {query
-                  ? <>نتایج جست‌وجو برای <strong>«{query}»</strong> در مزایده‌ها و مناقصه‌ها</>
-                  : "جدیدترین معاملات ثبت‌شده در تمام منابع مزایده و مناقصه"}
+                  ? <>نتایج جست‌وجو برای <strong>«{query}»</strong> در آگهی‌های ثبت‌شده</>
+                  : "جدیدترین آگهی‌های ثبت‌شده در همه منابع"}
               </p>
             </div>
             <div className="global-search-total">
@@ -299,17 +298,16 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
             <button type="button" className={kind === "all" ? "is-active" : ""} onClick={() => changeKind("all")}>
               همه معاملات <span>{formatNumber(summary.all)}</span>
             </button>
-            <button type="button" className={kind === "auction" ? "is-active" : ""} onClick={() => changeKind("auction")}>
-              مزایده‌ها <span>{formatNumber(summary.auctions)}</span>
-            </button>
-            <button type="button" className={kind === "tender" ? "is-active" : ""} onClick={() => changeKind("tender")}>
-              مناقصه‌ها <span>{formatNumber(summary.tenders)}</span>
-            </button>
+            {listingTypes.map(({ key, page, title }) => (
+              <button key={key} type="button" className={kind === key ? "is-active" : ""} onClick={() => changeKind(key)}>
+                {title} <span>{formatNumber(summary[page] ?? 0)}</span>
+              </button>
+            ))}
           </section>
 
           <ListingTable
             eyebrow="پایگاه یکپارچه معاملات"
-            title={kind === "auction" ? "تمام مزایده‌ها" : kind === "tender" ? "تمام مناقصه‌ها" : "تمام مزایده‌ها و مناقصه‌ها"}
+            title={activeType ? "تمام " + activeType.title : "فهرست همه آگهی‌ها"}
             tag="جست‌وجوی یکپارچه"
             columns={columns}
             items={result.items}
@@ -334,9 +332,9 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
             }
             advancedSearch={
               <FiltersPanel
-                kind={kind === "all" ? "all" : kind + "s"}
+                kind={activeType?.page ?? "all"}
                 options={result.filter_options || {}}
-                showCollection={kind !== "tender"}
+                showCollection={activeType?.showCollection ?? true}
                 {...filterPanel}
               />
             }
@@ -353,9 +351,9 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
       </div>
 
       {(selectedRecord || detailLoading) && (
-        <DetailModal
+        <Details
           record={selectedRecord}
-          kind={detailKind}
+          kind={detailType.page}
           loading={detailLoading}
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />

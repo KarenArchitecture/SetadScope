@@ -29,7 +29,18 @@ def latest_category_files(
 
     if not manifests:
         return []
-    manifest = json.loads(manifests[-1].read_text(encoding="utf-8"))
+    return _manifest_files(manifests[-1], category, group)
+
+
+def partial_category_files(category: str, group: str, name: str) -> list[Path]:
+    if Path(name).name != name or not name.startswith(f"{category}_partial_"):
+        raise ValueError("Invalid partial manifest name")
+    return _manifest_files(category_raw_dir(group, category) / name, category, group)
+
+
+def _manifest_files(path: Path, category: str, group: str) -> list[Path]:
+    root = path.parent
+    manifest = json.loads(path.read_text(encoding="utf-8"))
     if manifest.get("category") != category:
         raise ValueError("Manifest category does not match import category")
     manifest_group = manifest.get("collection_group")
@@ -43,7 +54,7 @@ def latest_category_files(
             raise FileNotFoundError(f"Run manifest references missing page: {path}")
         files.append(path)
     if not files:
-        raise ValueError("Successful manifest is empty")
+        raise ValueError("Run manifest is empty")
     return files
 
 

@@ -26,7 +26,7 @@ from app.services.auction_ingestion import (
     import_auction_pages,
     resolve_collection_group,
 )
-from app.auction_category_jobs import latest_category_files
+from app.auction_category_jobs import latest_category_files, partial_category_files
 from app.excel_api import ExportProgress, excel_download, router as excel_router, track_excel_export
 from app.services.keyword_settings import SETTING_KEY, configured_keywords, validate_keywords
 from app.services.listing_filters import announced_today, date_range
@@ -318,13 +318,19 @@ def run_collection_job(
             bufsize=1,
         )
 
+        partial_manifest = None
+        failure_message = None
         if process.stdout is not None:
             for raw_line in process.stdout:
                 line = raw_line.rstrip()
                 if not line:
                     continue
                 output_lines.append(line)
-                if line.startswith(PROGRESS_PREFIX):
+                if line.startswith("PARTIAL_MANIFEST:"):
+                    partial_manifest = line.removeprefix("PARTIAL_MANIFEST:")
+                elif line.startswith("FETCH FAILED:"):
+                    failure_message = line.removeprefix("FETCH FAILED:").strip()
+                elif line.startswith(PROGRESS_PREFIX):
                     try:
                         progress = json.loads(line[len(PROGRESS_PREFIX):])
                     except json.JSONDecodeError:
@@ -344,20 +350,29 @@ def run_collection_job(
 
         return_code = process.wait()
         output = "\n".join(output_lines)[-5000:]
-        if return_code != 0:
-            raise RuntimeError(output or f"{state_key} collector exited with code {return_code}")
+        incomplete = return_code != 0
+        reason = failure_message or f"{state_key} collector exited with code {return_code}"
+        if incomplete and not (kind == "auctions" and group == "shared" and category == "clearance" and partial_manifest):
+            raise RuntimeError(failure_message or output or reason)
 
+        with collection_lock:
+            fetch_state = dict(collection_states[state_key])
         update_collection_state(
             state_key,
             status="importing",
             phase="importing",
-            message="دریافت صفحات تمام شد؛ در حال پردازش و ذخیره در PostgreSQL...",
+            message=(
+                "دریافت صفحه متوقف شد. در حال ذخیره صفحات دریافت‌شده..."
+                if incomplete else "دریافت صفحات تمام شد. در حال ذخیره در PostgreSQL..."
+            ),
             progress_percent=85,
             output=output,
         )
 
         if kind == "tenders":
             files = latest_tender_run_files(TENDER_RAW_DIR)
+        elif incomplete:
+            files = partial_category_files(category, group, partial_manifest)
         else:
             files = latest_category_files(category, collection_group=group)
         if not files:
@@ -393,6 +408,7 @@ def run_collection_job(
                     session, files, category,
                     progress_callback=report_import_progress,
                     collection_group=group,
+                    incomplete_reason=reason if incomplete else None,
                 )
 
         records_fetched = int(totals.get("fetched", 0))
@@ -400,10 +416,18 @@ def run_collection_job(
         records_skipped = max(records_fetched - records_stored, 0)
         update_collection_state(
             state_key,
-            status="completed",
-            phase="completed",
-            message="جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد.",
-            progress_percent=100,
+            status="failed" if incomplete else "completed",
+            phase="failed" if incomplete else "completed",
+            message=(
+                f"{records_stored} رکورد ذخیره شد. دریافت صفحات بعدی با HTTP 428 متوقف شد."
+                if incomplete else "جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد."
+            ),
+            error=f"{reason}. {records_stored} رکورد پیش از توقف ذخیره شد." if incomplete else None,
+            progress_percent=fetch_state["progress_percent"] if incomplete else 100,
+            **({
+                key: fetch_state[key]
+                for key in ("current_page", "total_pages", "pages_completed")
+            } if incomplete else {}),
             records_fetched=records_fetched,
             records_stored=records_stored,
             records_skipped=records_skipped,

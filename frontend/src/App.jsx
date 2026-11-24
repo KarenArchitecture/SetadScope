@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Dashboard from "./pages/Dashboard";
+import { defaultListing, listingTypes } from "./listingTypes";
 import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
 import GlobalSearchPage from "./pages/GlobalSearchPage";
@@ -11,7 +11,7 @@ import { getApiHealth } from "./services/api";
 function resolvePage() {
   if (window.location.pathname.startsWith("/search")) return "search";
   if (window.location.pathname.startsWith("/settings")) return "settings";
-  return window.location.pathname.startsWith("/tenders") ? "tenders" : "auctions";
+  return listingTypes.find(({ path }) => window.location.pathname.startsWith(path))?.page ?? defaultListing.page;
 }
 
 function initialTheme() {
@@ -133,6 +133,7 @@ export default function App() {
   }
 
   const onSidebarToggle = () => setSidebarCollapsed((current) => !current);
+  const { Page: ListingPage } = listingTypes.find((listing) => listing.page === page) ?? defaultListing;
   const initialQuery = page === "search"
     ? new URLSearchParams(locationSearch).get("q") || ""
     : "";
@@ -159,7 +160,7 @@ export default function App() {
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
               ? <GlobalSearchPage key={routeVersion} query={initialQuery} onQueryChange={updateTableQuery} />
-              : <Dashboard key={page} kind={page} />}
+              : <ListingPage key={page} kind={page} />}
         </main>
       </div>
       {themeTransition && (
