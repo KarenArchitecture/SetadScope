@@ -3,13 +3,14 @@ import {
   Building2,
   CheckCircle2,
   CircleDollarSign,
-  Database,
+  Check,
   FileText,
   Gavel,
   Info,
   LoaderCircle,
   MapPin,
   Play,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
@@ -47,7 +48,7 @@ const GROUP_LABELS = {
   ...Object.fromEntries(AUCTION_GROUPS.map(({ key, label }) => [key, label])),
   shared: "حراج مشترک",
 };
-const ACTIVE_STATES = new Set(["collecting", "importing"]);
+const ACTIVE_STATES = new Set(["collecting", "importing", "running"]);
 function displayState(value) {
   return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
 }
@@ -172,26 +173,30 @@ function StatCard({
 function CollectionProgress({ state, kind, onDismiss }) {
   if (!state || state.status === "idle") return null;
 
-  const isTender = kind === "tenders";
+  const isBatch = state.kind === "auction_batch";
   const active = ACTIVE_STATES.has(state.status);
-  const percent = Math.max(0, Math.min(100, Number(state.progress_percent || 0)));
-  const statusLabel = state.status === "completed"
-    ? "با موفقیت تکمیل شد"
-    : state.status === "failed"
-      ? "اجرای ناموفق"
-      : state.status === "importing"
-        ? "در حال ذخیره در پایگاه داده"
-        : "در حال دریافت از سامانه ستاد";
+  const finished = state.status === "completed" || state.status === "completed_with_errors";
+  const percent = Math.max(0, Math.min(100, Number(
+    (isBatch ? state.overall_progress_percent : state.progress_percent) || 0,
+  )));
+  const statusLabel = {
+    completed: "با موفقیت تکمیل شد",
+    completed_with_errors: "جمع‌آوری با خطا پایان یافت",
+    failed: "اجرای ناموفق",
+    importing: "در حال ذخیره در پایگاه داده",
+    running: "در حال جمع‌آوری همه مزایده‌ها",
+  }[state.status] || "در حال دریافت از سامانه ستاد";
+  const panelLabel = isBatch ? "جمع‌آوری همه مزایده‌ها" : kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
 
   return (
     <section className={"collection-progress " + (state.status === "failed" ? "collection-progress--failed" : "")}>
       <div className="collection-progress__top">
         <div>
-          <span className="eyebrow">{isTender ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها"}</span>
+          <span className="eyebrow">{panelLabel}</span>
           <strong>{statusLabel}</strong>
         </div>
         <span className="collection-progress__percent">{formatNumber(percent)}٪</span>
-        {state.status === "completed" && percent >= 100 && (
+        {finished && percent >= 100 && (
           <button
             type="button"
             className="collection-progress__dismiss"
@@ -216,29 +221,56 @@ function CollectionProgress({ state, kind, onDismiss }) {
           style={{ width: (active && percent === 0 ? 2 : percent) + "%" }}
         />
       </div>
-      <p className="collection-progress__message">{state.message}</p>
+      <p className="collection-progress__message">
+        {isBatch && active && state.current_source_label ? (
+          <>
+            منبع {formatNumber(state.current_source_index)} از {formatNumber(state.total_sources)}
+            {" · "}{state.current_source_label} ({formatNumber(state.current_progress_percent)}٪)
+            {state.current_phase === "importing" && " · در حال ذخیره"}
+          </>
+        ) : state.message}
+      </p>
       <div className="collection-progress__metrics">
-        <span>
-          <strong>{formatNumber(state.pages_completed || 0)}</strong>
-          {" / "}
-          {formatNumber(state.total_pages)}
-          {" صفحه"}
-        </span>
-        <span>
-          <strong>{formatNumber(state.records_fetched || 0)}</strong>
-          {state.records_total
-            ? " / " + formatNumber(state.records_total) + " رکورد دریافت‌شده"
-            : " رکورد دریافت‌شده"}
-        </span>
-        <span>
-          <strong>{formatNumber(state.records_stored || 0)}</strong>
-          {" رکورد ذخیره‌شده"}
-        </span>
+        {isBatch ? (
+          <>
+            <span><strong>{formatNumber(state.completed_sources)}</strong> از {formatNumber(state.total_sources)} منبع اجرا شده</span>
+            <span><strong>{formatNumber(state.successful_sources)}</strong> منبع موفق</span>
+          </>
+        ) : (
+          <>
+            <span>
+              <strong>{formatNumber(state.pages_completed || 0)}</strong>
+              {" / "}
+              {formatNumber(state.total_pages)}
+              {" صفحه"}
+            </span>
+            <span>
+              <strong>{formatNumber(state.records_fetched || 0)}</strong>
+              {state.records_total
+                ? " / " + formatNumber(state.records_total) + " رکورد دریافت‌شده"
+                : " رکورد دریافت‌شده"}
+            </span>
+            <span>
+              <strong>{formatNumber(state.records_stored || 0)}</strong>
+              {" رکورد ذخیره‌شده"}
+            </span>
+          </>
+        )}
       </div>
       {state.status === "failed" && state.error && (
         <details className="collection-progress__error">
           <summary>نمایش جزئیات خطا</summary>
           <pre>{state.error}</pre>
+        </details>
+      )}
+      {isBatch && state.failed_sources?.length > 0 && (
+        <details className="collection-progress__error">
+          <summary>{formatNumber(state.failed_sources.length)} منبع ناموفق</summary>
+          <ul className="collection-progress__failed-sources">
+            {state.failed_sources.map(({ key, label, error }) => (
+              <li key={key}><strong>{label}</strong><pre>{error}</pre></li>
+            ))}
+          </ul>
         </details>
       )}
       {state.status === "completed" && state.totals && (
@@ -248,6 +280,60 @@ function CollectionProgress({ state, kind, onDismiss }) {
           {" "}{formatNumber(state.totals.stored)} رکورد ذخیره شد.
         </div>
       )}
+    </section>
+  );
+}
+
+function AuctionScopeFilters({ collectionGroup, categories, onGroupChange, onCategoryChange }) {
+  const allTypes = categories.length === 0;
+  const hasClearance = allTypes || categories.includes("clearance");
+  const groupLabel = categories.length === 1 && hasClearance
+    ? GROUP_LABELS.shared
+    : collectionGroup === "all" ? "هر دو مجموعه" : GROUP_LABELS[collectionGroup];
+  const categoryLabel = allTypes ? "همه انواع" : categories.map((key) => CATEGORY_LABELS[key]).join("، ");
+
+  return (
+    <section className="auction-scope" aria-labelledby="auction-scope-title">
+      <h2 className="auction-scope__title" id="auction-scope-title">
+        <SlidersHorizontal size={17} aria-hidden="true" />
+        محدودهٔ مزایده‌ها
+      </h2>
+      <div className="auction-scope__row">
+        <div className="auction-scope__description">
+          <h3 id="auction-scope-group">مجموعه آگهی</h3>
+          <p id="auction-scope-group-hint">یک مجموعه یا هر دو مجموعه را انتخاب کنید.</p>
+        </div>
+        <div className="auction-scope__options" role="group" aria-labelledby="auction-scope-group" aria-describedby="auction-scope-group-hint">
+          {AUCTION_GROUPS.map(({ key, label }) => (
+            <button key={key} type="button" aria-pressed={collectionGroup === key} onClick={() => onGroupChange(key)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div className="auction-scope__row">
+        <div className="auction-scope__description">
+          <h3 id="auction-scope-category">نوع مزایده</h3>
+          <p id="auction-scope-category-hint">چند نوع را هم‌زمان انتخاب کنید یا «همه» را بزنید.</p>
+        </div>
+        <div className="auction-scope__options" role="group" aria-labelledby="auction-scope-category" aria-describedby="auction-scope-category-hint">
+          {[{ key: "all", label: "همه" }, ...AUCTION_CATEGORIES].map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              aria-pressed={key === "all" ? allTypes : categories.includes(key)}
+              onClick={() => onCategoryChange(key)}
+            >
+              <Check size={13} aria-hidden="true" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      <footer className="auction-scope__footer">
+        <span className="auction-scope__selection"><strong>نمای فعلی</strong> {groupLabel} · {categoryLabel}</span>
+        {hasClearance && <span><Info size={14} aria-hidden="true" /> حراج مشترک از تابلوی مرکزی ستاد دریافت می‌شود.</span>}
+      </footer>
     </section>
   );
 }
@@ -277,7 +363,7 @@ export function DetailModal({ record, kind, loading, onClose }) {
             amval_tamliki: "سازمان جمع‌آوری و فروش اموال تملیکی",
             shared: "حراج مشترک ستاد",
           })[record.collection_group] || "—"],
-          ["دسته مزایده", AUCTION_CATEGORIES_BY_GROUP[record.collection_group]?.find((item) => item.key === record.category)?.label || "—"],
+          ["دسته مزایده", CATEGORY_LABELS[record.category] || "—"],
           ["شناسه منبع", record.source_party_id],
           ["شناسه مزایده", record.auction_id],
           ["عنوان مورد", record.item_title],
@@ -380,7 +466,10 @@ export default function Dashboard({ kind }) {
   );
   const isSharedClearance = !isTender && auctionCategory === "clearance";
   const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
-  const canCollect = isTender || Boolean(auctionCategory && effectiveCollectionGroup !== "all");
+  const collectAllAuctions = !isTender && selectedCategories.length === 0;
+  const collectionCategory = collectAllAuctions ? "all" : auctionCategory;
+  const collectionLabel = isTender ? "مناقصه‌ها" : collectAllAuctions ? "همه مزایده‌ها" : selectedCategoryLabel;
+  const canCollect = isTender || collectAllAuctions || Boolean(auctionCategory && effectiveCollectionGroup !== "all");
   const auctionScope = useMemo(() => ({
     category: "all",
     categories: selectedCategories,
@@ -411,6 +500,8 @@ export default function Dashboard({ kind }) {
   const lastRefreshedRun = useRef(null);
   const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
+  const startRequestVersion = useRef(0);
+  const [collectionStarting, setCollectionStarting] = useState(false);
   const collectionScopeVersion = useRef(0);
 
   const loadPage = useCallback(async (nextPage = 1) => {
@@ -449,11 +540,12 @@ export default function Dashboard({ kind }) {
   useEffect(() => {
     if (!canCollect) return undefined;
     let active = true;
-    getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup).then((status) => {
-      if (active) setCollectionState(status);
+    const requestVersion = startRequestVersion.current;
+    getCollectionStatus(kind, collectionCategory, effectiveCollectionGroup).then((status) => {
+      if (active && requestVersion === startRequestVersion.current) setCollectionState(status);
     }).catch(() => {});
     return () => { active = false; };
-  }, [canCollect, kind, auctionCategory, effectiveCollectionGroup]);
+  }, [canCollect, kind, collectionCategory, effectiveCollectionGroup]);
 
   useEffect(() => {
     if (!canCollect || !ACTIVE_STATES.has(collectionState.status)) return undefined;
@@ -463,39 +555,24 @@ export default function Dashboard({ kind }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup);
+        const nextState = await getCollectionStatus(kind, collectionCategory, effectiveCollectionGroup);
         if (cancelled) return;
         setCollectionState(nextState);
         const completedRunKey = nextState.finished_at || nextState.started_at;
-        if (
-          nextState.status === "completed" &&
-          completedRunKey &&
-          lastNotifiedCollectionRun.current !== completedRunKey
-        ) {
+        const finished = ["completed", "completed_with_errors", "failed"].includes(nextState.status);
+        if (finished && completedRunKey && lastNotifiedCollectionRun.current !== completedRunKey) {
           lastNotifiedCollectionRun.current = completedRunKey;
           const stored = formatNumber(nextState.records_stored || nextState.totals?.stored || 0);
-          notifyToast(
-            "success",
-            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
-              " با موفقیت انجام شد؛ " + stored + " رکورد ذخیره شد.",
-            { duration: 5200 },
-          );
-          if (lastRefreshedRun.current !== nextState.finished_at) {
-            lastRefreshedRun.current = nextState.finished_at;
+          const message = collectAllAuctions
+            ? nextState.message
+            : nextState.status === "completed"
+              ? "جمع‌آوری " + collectionLabel + " با موفقیت انجام شد. " + stored + " رکورد ذخیره شد."
+              : "جمع‌آوری " + collectionLabel + " ناموفق بود. جزئیات در پنل وضعیت اجرا قابل مشاهده است.";
+          notifyToast(nextState.status === "completed" ? "success" : "error", message, { duration: 5500 });
+          if (nextState.status !== "failed" && lastRefreshedRun.current !== completedRunKey) {
+            lastRefreshedRun.current = completedRunKey;
             await loadPage(1);
           }
-        } else if (
-          nextState.status === "failed" &&
-          completedRunKey &&
-          lastNotifiedCollectionRun.current !== completedRunKey
-        ) {
-          lastNotifiedCollectionRun.current = completedRunKey;
-          notifyToast(
-            "error",
-            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
-              " ناموفق بود. جزئیات خطا در پنل وضعیت اجرا قابل مشاهده است.",
-            { duration: 6500 },
-          );
         }
       } catch {
         if (!cancelled) setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
@@ -507,7 +584,7 @@ export default function Dashboard({ kind }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [canCollect, collectionState.status, kind, isTender, auctionCategory, effectiveCollectionGroup, loadPage, selectedCategoryLabel]);
+  }, [canCollect, collectAllAuctions, collectionState.status, kind, collectionCategory, effectiveCollectionGroup, loadPage, collectionLabel]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -717,17 +794,23 @@ export default function Dashboard({ kind }) {
 
   async function handleCollection() {
     const scopeVersion = collectionScopeVersion.current;
+    startRequestVersion.current += 1;
+    setCollectionStarting(true);
     setError("");
     setCollectionProgressDismissed(false);
-    const collectionLabel = isTender ? "مناقصه‌ها" : selectedCategoryLabel;
     const toastId = notifyToast(
       "loading",
       "در حال ارسال درخواست جمع‌آوری " + collectionLabel + "...",
       { duration: 0 },
     );
     try {
-      const nextState = await startCollection(kind, auctionCategory, effectiveCollectionGroup);
-      if (scopeVersion === collectionScopeVersion.current) setCollectionState(nextState);
+      const nextState = await startCollection(kind, collectionCategory, effectiveCollectionGroup);
+      if (scopeVersion === collectionScopeVersion.current) {
+        setCollectionState((current) => ({
+          ...nextState,
+          last_updated_at: nextState.last_updated_at ?? current.last_updated_at,
+        }));
+      }
       notifyToast(
         "info",
         "درخواست جمع‌آوری " + collectionLabel + " ثبت شد؛ نتیجه پس از پایان اجرا اعلام می‌شود.",
@@ -738,6 +821,8 @@ export default function Dashboard({ kind }) {
         ("شروع جمع‌آوری " + collectionLabel + " ناموفق بود.");
       if (scopeVersion === collectionScopeVersion.current) setError(message);
       notifyToast("error", message, { id: toastId, duration: 6500 });
+    } finally {
+      setCollectionStarting(false);
     }
   }
 
@@ -781,26 +866,20 @@ export default function Dashboard({ kind }) {
                   <Info size={16} />
                 </span>
               </div>
-              <p>
-                {isTender
-                  ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
-                  : isSharedClearance
-                    ? "آگهی‌های حراج از تابلوی مرکزی ستاد؛ منبع مشترک برای هر دو مجموعه"
-                    : "آگهی‌های " + selectedCategoryLabel + " از " + (collectionGroup === "all" ? "همه مجموعه‌ها" : GROUP_LABELS[collectionGroup])}
-              </p>
+              {isTender && <p>فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد</p>}
             </div>
             {canCollect && <div className="page-heading__actions">
               <section className="collection-action-card" aria-label="عملیات داده">
                 <button
                   className="button button--primary collection-action-card__collect"
                   onClick={handleCollection}
-                  disabled={collectionRunning}
-                  aria-label={"جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
+                  disabled={collectionRunning || collectionStarting}
+                  aria-label={"جمع‌آوری " + collectionLabel}
                 >
-                  {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                  <span>{collectionRunning
+                  {collectionRunning || collectionStarting ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
+                  <span>{collectionRunning || collectionStarting
                     ? "در حال اجرا..."
-                    : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}</span>
+                    : "جمع‌آوری " + collectionLabel}</span>
                 </button>
                 <span
                   className="collection-action-card__last-updated"
@@ -813,50 +892,12 @@ export default function Dashboard({ kind }) {
           </section>
 
           {!isTender && (
-            <section className="auction-source-selector" aria-label="انتخاب مجموعه یا منبع داده">
-              <div className="auction-source-selector__copy">
-                <strong>مجموعه آگهی</strong>
-                <small>منبع اصلی آگهی‌ها را انتخاب کن؛ حراج از تابلوی مرکزی و به‌صورت مشترک دریافت می‌شود.</small>
-              </div>
-              <div className="auction-source-selector__options" role="group" aria-label="مجموعه‌های مزایده">
-                {AUCTION_GROUPS.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={"auction-source-selector__option " + (collectionGroup === key ? "auction-source-selector__option--active" : "")}
-                    aria-pressed={collectionGroup === key}
-                    onClick={() => handleCollectionGroupChange(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-          {!isTender && (
-            <nav className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
-              <div className="auction-category-nav__tabs" role="group" aria-label="نوع مزایده">
-                {[{ key: "all", label: "همه" }, ...AUCTION_CATEGORIES].map(({ key, label }) => {
-                  const selected = key === "all" ? selectedCategories.length === 0 : selectedCategories.includes(key);
-                  return (
-                    <button
-                      key={key}
-                      type="button"
-                      className={"auction-category-nav__tab " + (selected ? "auction-category-nav__tab--active" : "")}
-                      aria-pressed={selected}
-                      onClick={() => handleCategoryChange(key)}
-                    >
-                      {label}
-                    </button>
-                  );
-                })}
-              </div>
-            </nav>
-          )}
-          {isSharedClearance && (
-            <div className="auction-category-note">
-              این حراج از تابلوی مرکزی ستاد دریافت می‌شود و برای هر دو مجموعه مشترک است؛ اطلاعات آن فقط یک‌بار جمع‌آوری و ذخیره می‌شود.
-            </div>
+            <AuctionScopeFilters
+              collectionGroup={collectionGroup}
+              categories={selectedCategories}
+              onGroupChange={handleCollectionGroupChange}
+              onCategoryChange={handleCategoryChange}
+            />
           )}
           {canCollect && !isCollectionProgressDismissed && (
             <CollectionProgress

@@ -24,6 +24,8 @@ def test_global_collection_runs_all_sources_sequentially_and_continues_after_fai
             for key, state in list(main.collection_states.items()):
                 if key == "global":
                     main.collection_states[key] = main.initial_global_collection_state()
+                elif state["kind"] == "auction_batch":
+                    main.collection_states[key] = main.initial_auction_batch_state(state["collection_group"])
                 elif key == "tenders":
                     main.collection_states[key] = main.initial_collection_state("tenders")
                 else:
@@ -131,3 +133,84 @@ def test_global_collection_start_registers_background_job_and_reports_source_cou
         assert background_tasks.tasks[0].func is main.run_global_collection_job
     finally:
         _restore_states(previous_states)
+
+
+@pytest.mark.parametrize(
+    "group,expected_groups",
+    [
+        ("executive_agencies", ("executive_agencies",)),
+        ("amval_tamliki", ("amval_tamliki",)),
+        ("all", ("executive_agencies", "amval_tamliki")),
+    ],
+)
+def test_all_auctions_routes_run_categories_in_order_and_report_failures(monkeypatch, group, expected_groups):
+    from fastapi.testclient import TestClient
+
+    class EmptyHistory:
+        def scalar(self, _query):
+            return None
+
+    previous_states = _snapshot_states()
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_db, EmptyHistory)
+    calls = []
+    failure = (expected_groups[0], "immovable")
+
+    def run_one(kind, collection_group, category):
+        assert kind == "auctions"
+        index = len(calls)
+        assert main.collection_states[main.auction_batch_key(group)]["completed_sources"] == index
+        calls.append((collection_group, category))
+        key = main.collection_state_key(collection_group, category)
+        main.update_collection_state(key, status="collecting", progress_percent=50)
+        batch = main.collection_states[main.auction_batch_key(group)]
+        assert batch["current_progress_percent"] == 50
+        assert batch["current_source_key"] == key
+        if (collection_group, category) == failure:
+            raise RuntimeError("immovable failed")
+        main.update_collection_state(key, status="completed", progress_percent=100)
+
+    monkeypatch.setattr(main, "run_collection_job", run_one)
+    try:
+        with TestClient(main.app) as client:
+            params = {"collection_group": group}
+            initial = client.get("/api/collection/auctions/all/status", params=params)
+            assert initial.status_code == 200
+            assert initial.json()["status"] == "idle"
+            started = client.post("/api/collection/auctions/all/run", params=params)
+            assert started.status_code == 202, started.text
+            expected = [
+                (owner, category)
+                for category in ("movable", "immovable", "rental", "minor")
+                for owner in expected_groups
+            ] + [("shared", "clearance")]
+            assert calls == expected
+            assert started.json()["total_sources"] == len(expected)
+            status = client.get("/api/collection/auctions/all/status", params=params).json()
+            assert status["status"] == "completed_with_errors"
+            assert status["overall_progress_percent"] == 100
+            assert status["successful_sources"] == len(expected) - 1
+            assert status["failed_sources"][0]["error"] == "immovable failed"
+    finally:
+        _restore_states(previous_states)
+
+
+def test_auction_batch_reservation_blocks_overlapping_work_before_first_source():
+    snapshot = _snapshot_states()
+    try:
+        pending = BackgroundTasks()
+        response = main.start_auction_batch(pending, "amval_tamliki")
+        assert response["status"] == "running"
+        assert response["total_sources"] == 5
+        assert len(pending.tasks) == 1
+
+        with pytest.raises(HTTPException) as duplicate:
+            main.start_auction_batch(BackgroundTasks(), "executive_agencies")
+        with pytest.raises(HTTPException) as global_request:
+            main.start_global_collection(BackgroundTasks())
+        with pytest.raises(HTTPException) as individual:
+            main.start_auction_category_collection(
+                "clearance", BackgroundTasks(), db=None, collection_group="shared",
+            )
+        assert duplicate.value.status_code == global_request.value.status_code == individual.value.status_code == 409
+    finally:
+        _restore_states(snapshot)

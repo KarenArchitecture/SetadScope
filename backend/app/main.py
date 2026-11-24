@@ -113,6 +113,27 @@ GLOBAL_COLLECTION_SOURCES = tuple(
 )
 
 
+AuctionBatchGroup = Literal["all", "executive_agencies", "amval_tamliki"]
+
+
+def auction_batch_key(group: AuctionBatchGroup) -> str:
+    return f"auction-batch:{group}"
+
+
+def auction_batch_sources(group: AuctionBatchGroup) -> tuple[dict, ...]:
+    # Preserve category order, including when both owning collections are selected.
+    return tuple(
+        source
+        for category in AUCTION_CATEGORY_LABELS
+        for source in GLOBAL_COLLECTION_SOURCES
+        if source["category"] == category
+        and (group == "all" or source["collection_group"] in (group, "shared"))
+    )
+
+
+AUCTION_BATCH_GROUPS: tuple[AuctionBatchGroup, ...] = ("all", "executive_agencies", "amval_tamliki")
+
+
 def collection_state_key(collection_group: str, category: str) -> str:
     return f"auctions:{collection_group}:{category}"
 
@@ -146,16 +167,18 @@ def initial_collection_state(
     }
 
 
-def initial_global_collection_state() -> dict:
+def initial_global_collection_state(
+    *, kind: str = "global", total_sources: int = len(GLOBAL_COLLECTION_SOURCES),
+) -> dict:
     return {
-        "kind": "global",
+        "kind": kind,
         "status": "idle",
         "phase": "idle",
-        "message": "هنوز بروزرسانی سراسری اجرا نشده است.",
+        "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
         "started_at": None,
         "finished_at": None,
         "current_source_index": 0,
-        "total_sources": len(GLOBAL_COLLECTION_SOURCES),
+        "total_sources": total_sources,
         "completed_sources": 0,
         "successful_sources": 0,
         "failed_sources": [],
@@ -190,21 +213,40 @@ for _group, _categories in AUCTION_CATEGORIES_BY_GROUP.items():
         collection_states[_key] = initial_collection_state("auctions", _group, _category)
 
 
+def initial_auction_batch_state(group: AuctionBatchGroup) -> dict:
+    return {
+        **initial_global_collection_state(kind="auction_batch", total_sources=len(auction_batch_sources(group))),
+        "collection_group": group,
+    }
+
+
+for _group in AUCTION_BATCH_GROUPS:
+    collection_states[auction_batch_key(_group)] = initial_auction_batch_state(_group)
+
+
+def active_batch_key() -> str | None:
+    # Call under collection_lock when reading or reserving a batch.
+    for key in ("global", *(auction_batch_key(group) for group in AUCTION_BATCH_GROUPS)):
+        if collection_states[key]["status"] == "running":
+            return key
+    return None
+
+
 def update_collection_state(state_key: str, **values) -> dict:
     with collection_lock:
         collection_state = collection_states[state_key]
         collection_state.update(values)
 
-        global_state = collection_states.get("global")
+        batch_key = active_batch_key()
+        batch_state = collection_states[batch_key] if batch_key else None
         if (
-            global_state is not None
-            and global_state["status"] == "running"
-            and global_state["current_source_key"] == state_key
+            batch_state is not None
+            and batch_state["current_source_key"] == state_key
         ):
             percent = max(0, min(100, int(collection_state.get("progress_percent", 0) or 0)))
-            total_sources = max(int(global_state.get("total_sources", 1)), 1)
-            completed_sources = int(global_state.get("completed_sources", 0))
-            global_state.update({
+            total_sources = max(int(batch_state.get("total_sources", 1)), 1)
+            completed_sources = int(batch_state.get("completed_sources", 0))
+            batch_state.update({
                 "current_source_status": collection_state.get("status", "collecting"),
                 "current_progress_percent": percent,
                 "progress_percent": percent,
@@ -384,27 +426,18 @@ def run_collection_job(
         )
 
 def run_global_collection_job() -> None:
-    """Run every registered auction/tender collector sequentially; failures are isolated."""
-    total_sources = len(GLOBAL_COLLECTION_SOURCES)
-    with collection_lock:
-        global_state = collection_states["global"]
-        if global_state["status"] != "running":
-            global_state = initial_global_collection_state()
-            global_state.update({
-                "status": "running",
-                "phase": "starting",
-                "started_at": datetime.now(timezone.utc).isoformat(),
-                "message": "در حال آماده‌سازی بروزرسانی سراسری...",
-            })
-            collection_states["global"] = global_state
-        global_state["total_sources"] = total_sources
+    run_collection_batch("global", GLOBAL_COLLECTION_SOURCES)
 
-    for index, source in enumerate(GLOBAL_COLLECTION_SOURCES, start=1):
+
+def run_collection_batch(batch_key: str, sources: tuple[dict, ...]) -> None:
+    """Run the reserved batch sequentially, recording failed sources and continuing."""
+    total_sources = len(sources)
+    for index, source in enumerate(sources, start=1):
         state_key = global_source_state_key(source)
         label = source["label"]
         with collection_lock:
-            global_state = collection_states["global"]
-            global_state.update({
+            batch_state = collection_states[batch_key]
+            batch_state.update({
                 "phase": "collecting",
                 "current_source_index": index,
                 "total_sources": total_sources,
@@ -414,7 +447,7 @@ def run_global_collection_job() -> None:
                 "current_progress_percent": 0,
                 "progress_percent": 0,
                 "overall_progress_percent": round(
-                    global_state["completed_sources"] / max(total_sources, 1) * 100
+                    batch_state["completed_sources"] / max(total_sources, 1) * 100
                 ),
                 "current_phase": "starting",
                 "current_message": f"در حال شروع منبع {index} از {total_sources}: {label}",
@@ -444,12 +477,12 @@ def run_global_collection_job() -> None:
             )
 
         with collection_lock:
-            global_state = collection_states["global"]
+            batch_state = collection_states[batch_key]
             source_state = collection_states[state_key]
             succeeded = source_state.get("status") == "completed"
             completed_sources = index
-            successful_sources = int(global_state.get("successful_sources", 0))
-            failed_sources = list(global_state.get("failed_sources", []))
+            successful_sources = int(batch_state.get("successful_sources", 0))
+            failed_sources = list(batch_state.get("failed_sources", []))
 
             if succeeded:
                 successful_sources += 1
@@ -473,7 +506,7 @@ def run_global_collection_job() -> None:
                 if succeeded
                 else max(0, min(100, int(source_state.get("progress_percent", 0) or 0)))
             )
-            global_state.update({
+            batch_state.update({
                 "completed_sources": completed_sources,
                 "successful_sources": successful_sources,
                 "failed_sources": failed_sources,
@@ -493,17 +526,16 @@ def run_global_collection_job() -> None:
             })
 
     with collection_lock:
-        global_state = collection_states["global"]
-        failed_count = len(global_state["failed_sources"])
-        successful_count = int(global_state["successful_sources"])
+        batch_state = collection_states[batch_key]
+        failed_count = len(batch_state["failed_sources"])
+        successful_count = int(batch_state["successful_sources"])
         final_status = "completed_with_errors" if failed_count else "completed"
         final_message = (
-            f"بروزرسانی سراسری تمام شد؛ {successful_count} از {total_sources} منبع "
-            f"با موفقیت بروزرسانی شدند."
+            f"جمع‌آوری پایان یافت. {successful_count} از {total_sources} منبع به‌روزرسانی شد."
             if failed_count
-            else f"تمام {total_sources} منبع با موفقیت بروزرسانی شدند."
+            else f"تمام {total_sources} منبع با موفقیت به‌روزرسانی شد."
         )
-        global_state.update({
+        batch_state.update({
             "status": final_status,
             "phase": "completed",
             "current_source_index": total_sources,
@@ -812,37 +844,29 @@ def get_global_collection_status():
 
 @app.post("/api/collection/global/run", status_code=202)
 def start_global_collection(background_tasks: BackgroundTasks):
+    response = reserve_collection_batch("global", initial_global_collection_state(), include_tenders=True)
+    background_tasks.add_task(run_global_collection_job)
+    return response
+
+
+def reserve_collection_batch(batch_key: str, initial: dict, *, include_tenders: bool = False) -> dict:
     with collection_lock:
-        global_state = collection_states["global"]
-        if global_state["status"] == "running":
-            raise HTTPException(status_code=409, detail="A global collection is already running.")
-
-        active_sources = [
-            key
+        if active_batch_key():
+            raise HTTPException(status_code=409, detail="یک جمع‌آوری گروهی در حال اجراست.")
+        if any(
+            state["status"] in {"collecting", "importing"}
             for key, state in collection_states.items()
-            if key != "global" and state.get("status") in {"collecting", "importing"}
-        ]
-        if active_sources:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "یک عملیات جمع‌آوری مستقل در حال اجراست؛ ابتدا آن را تمام کن و سپس "
-                    "بروزرسانی سراسری را شروع کن."
-                ),
-            )
-
-        next_state = initial_global_collection_state()
-        next_state.update({
+            if key.startswith("auctions:") or (include_tenders and key == "tenders")
+        ):
+            raise HTTPException(status_code=409, detail="یکی از منابع این عملیات در حال جمع‌آوری است.")
+        initial.update({
             "status": "running",
             "phase": "starting",
             "started_at": datetime.now(timezone.utc).isoformat(),
-            "message": "در حال آماده‌سازی بروزرسانی سراسری آگهی‌ها...",
+            "message": "در حال آماده‌سازی جمع‌آوری...",
         })
-        collection_states["global"] = next_state
-        response_state = dict(next_state)
-
-    background_tasks.add_task(run_global_collection_job)
-    return response_state
+        collection_states[batch_key] = initial
+        return dict(initial)
 
 
 @app.get("/api/collection/{kind}/status")
@@ -891,6 +915,40 @@ def start_collection(
     return response_state
 
 
+@app.get("/api/collection/auctions/all/status")
+def get_auction_batch_status(
+    collection_group: AuctionBatchGroup = "all",
+    db: Session = Depends(get_db),
+):
+    with collection_lock:
+        state = dict(collection_states[auction_batch_key(collection_group)])
+    sources = auction_batch_sources(collection_group)
+    last_updated = db.scalar(
+        select(func.max(IngestionRun.finished_at)).where(
+            IngestionRun.kind == "auctions",
+            IngestionRun.status == "success",
+            or_(*(
+                (IngestionRun.collection_group == source["collection_group"])
+                & (IngestionRun.category == source["category"])
+                for source in sources
+            )),
+        )
+    )
+    state["last_updated_at"] = last_updated.isoformat() if last_updated else None
+    return state
+
+
+@app.post("/api/collection/auctions/all/run", status_code=202)
+def start_auction_batch(
+    background_tasks: BackgroundTasks,
+    collection_group: AuctionBatchGroup = "all",
+):
+    batch_key = auction_batch_key(collection_group)
+    response = reserve_collection_batch(batch_key, initial_auction_batch_state(collection_group))
+    background_tasks.add_task(run_collection_batch, batch_key, auction_batch_sources(collection_group))
+    return response
+
+
 # Existing route shapes remain available. Pass collection_group to select a
 # source group; clearance defaults to the shared Central Board feed.
 @app.get("/api/collection/auctions/{category}/status")
@@ -920,8 +978,8 @@ def start_auction_category_collection(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     state_key = collection_state_key(group, category)
     with collection_lock:
-        if collection_states["global"]["status"] == "running":
-            raise HTTPException(status_code=409, detail="A global collection is already running.")
+        if active_batch_key():
+            raise HTTPException(status_code=409, detail="یک جمع‌آوری گروهی در حال اجراست.")
         state = collection_states[state_key]
         if state["status"] in {"collecting", "importing"}:
             raise HTTPException(
