@@ -48,26 +48,33 @@ def build_excel(
     observed_widths = [_display_length(header) + 7 for header in headers]
     maximum_widths = [widths[i] if i < len(widths) else 60 for i in range(len(headers))]
 
+    alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+    header_fill = PatternFill("solid", fgColor="24466E")
+    header_font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
+    body_font = Font(name="Calibri", size=12, bold=True, color="253B53")
+    link_font = Font(name="Calibri", size=12, bold=True, color="2767A4", underline="single")
     for cell in sheet[1]:
-        cell.fill = PatternFill("solid", fgColor="24466E")
-        cell.font = Font(name="Calibri", size=13, bold=True, color="FFFFFF")
-        cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.alignment = alignment
 
     count = 0
     numeric = set(numeric_columns)
     for values in rows:
         sheet.append(list(values))
         count += 1
-        row_index = sheet.max_row
+        row_index = count + 1
         visible_lines = 1
 
-        for cell in sheet[row_index]:
+        # Explicit bounds avoid rescanning the whole sheet for every row.
+        cells = next(sheet.iter_rows(min_row=row_index, max_row=row_index, max_col=len(headers)))
+        for cell in cells:
             index = cell.column - 1
             length = _display_length(cell.value)
             observed_widths[index] = max(observed_widths[index], length + 4)
 
-            cell.alignment = Alignment(horizontal="right", vertical="center", wrap_text=True)
-            cell.font = Font(name="Calibri", size=12, bold=True, color="253B53")
+            cell.alignment = alignment
+            cell.font = body_font
             if cell.column in numeric and cell.value is not None:
                 cell.number_format = "#,##0.00"
                 # Include the thousands separators and decimals in width estimates.
@@ -76,10 +83,7 @@ def build_excel(
 
             if isinstance(cell.value, str) and cell.value.startswith(("https://", "http://")):
                 cell.hyperlink = cell.value
-                cell.font = Font(
-                    name="Calibri", size=12, bold=True,
-                    color="2767A4", underline="single",
-                )
+                cell.font = link_font
 
             # Avoid enormous rows while showing several lines of long descriptions.
             available = max(8, int(maximum_widths[index] / 1.15) - 3)
