@@ -1,78 +1,116 @@
 import { useEffect, useRef, useState } from "react";
-import { CalendarDays, X } from "lucide-react";
-import { getCollectionStatus, startCollection } from "../services/api";
+import { CalendarDays, MapPin, Minus, X } from "lucide-react";
+import { quickRequest } from "../services/api";
 import ExcelExportButton from "../components/ExcelExportButton";
 import "./QuickActions.css";
 
-const report = "/api/auctions/export.xlsx?category=all&collection_group=all&today_only=true&matched_only=false&sort_by=announcement_at&sort_dir=desc";
-const storageKey = "setadscope-quick-auctions";
+const actions = {
+  auctions: { title: "مزایده‌های امروز", icon: CalendarDays, text: "جمع‌آوری همه انواع مزایده و دانلود اکسل به ترتیب ساعت اعلام", filters: "category=all&collection_group=all&today_only=true" },
+  tenders: { title: "مناقصه‌های گلستان", icon: MapPin, text: "دانلود مناقصه‌های استان گلستان از جدیدترین تاریخ اعلام", filters: "province=" + encodeURIComponent("گلستان") },
+};
+const key = "setadscope.quickRun";
+const fa = value => Number(value || 0).toLocaleString("fa-IR");
 
-export default function QuickActions() {
+export default function QuickActions({ visible }) {
   const modal = useRef(null);
-  const starting = useRef(false);
-  const [run, setRun] = useState(() => sessionStorage.getItem(storageKey));
+  const [job, setJob] = useState(() => {
+    try { return JSON.parse(sessionStorage.getItem(key)); } catch { return null; }
+  });
+  const [mini, setMini] = useState(Boolean(job));
   const [state, setState] = useState(null);
   const [error, setError] = useState("");
-  const finished = ["completed", "completed_with_errors"].includes(state?.status);
+  const [exportDone, setExportDone] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const terminal = ["completed", "completed_with_errors", "cancelled"].includes(state?.status);
+  const action = actions[job?.kind];
+  const starting = useRef(false);
 
   useEffect(() => {
-    if (!run || finished) return;
-    let active = true;
+    if (!job?.id || terminal) return;
+    let alive = true;
     let timer;
     async function poll() {
       try {
-        const next = await getCollectionStatus("auctions", "all", "all");
-        if (!active) return;
-        if (next.started_at !== run) {
-          sessionStorage.removeItem(storageKey);
-          setRun(null);
-          setError("اجرای قبلی دیگر در دسترس نیست. دوباره شروع کنید.");
+        const next = await quickRequest(job.kind, "status");
+        if (!alive) return;
+        if (next.started_at !== job.id) {
+          setState({ status: "cancelled", message: "اجرای قبلی پایان یافته یا سرور بازنشانی شده است." });
+          sessionStorage.removeItem(key);
           return;
         }
-        setError("");
         setState(next);
-      } catch {
-        if (active) setError("ارتباط قطع شد. دریافت وضعیت دوباره تلاش می‌شود.");
-      }
-      if (active) timer = setTimeout(poll, 1200);
+        setError("");
+        if (next.status === "cancelled") sessionStorage.removeItem(key);
+      } catch { if (alive) setError("دریافت وضعیت دوباره تلاش می‌شود."); }
+      if (alive) timer = setTimeout(poll, 900);
     }
     poll();
-    return () => { active = false; clearTimeout(timer); };
-  }, [run, finished]);
+    return () => { alive = false; clearTimeout(timer); };
+  }, [job, terminal]);
 
-  async function open() {
+  function restore() {
+    setMini(false);
     modal.current.showModal();
-    if (starting.current || (run && !finished)) return;
+  }
+
+  async function start(kind) {
+    restore();
+    if (job || starting.current) return;
     starting.current = true;
-    setError("");
-    setState(null);
+    setJob({ kind });
+    setState(null); setError(""); setExportDone(false); setStopping(false);
     try {
-      const next = await startCollection("auctions", "all", "all");
-      sessionStorage.setItem(storageKey, next.started_at);
-      setState(next);
-      setRun(next.started_at);
+      const next = await quickRequest(kind, "run");
+      const current = { kind, id: next.started_at };
+      sessionStorage.setItem(key, JSON.stringify(current));
+      setState(next); setJob(current);
     } catch (e) {
-      setError(e.response?.data?.detail || "شروع جمع‌آوری ناموفق بود.");
-      setRun(null);
+      setError(e.response?.data?.detail || "شروع عملیات ناموفق بود.");
+      setState({status:"cancelled"});
     } finally { starting.current = false; }
   }
 
-  return <section className="dashboard-content quick-actions">
-    <h1>دسترسی سریع</h1>
-    <div className="quick-grid"><button className="quick-card" onClick={open}>
-      <CalendarDays size={42} aria-hidden="true" />
-      <strong>مزایده‌های امروز</strong>
-      <span>جمع‌آوری همه انواع مزایده و دانلود اکسل به ترتیب ساعت اعلام</span>
-    </button></div>
-    <dialog ref={modal} aria-labelledby="quick-title">
-      <button className="quick-close" aria-label="بستن" onClick={() => modal.current.close()}><X size={18}/></button>
-      <h2 id="quick-title">گزارش مزایده‌های امروز</h2>
-      <p role="status">{error || state?.message || "در حال شروع جمع‌آوری…"}</p>
-      {state && <><progress aria-label="پیشرفت جمع‌آوری" max="100" value={state.overall_progress_percent}/>
-        <p>{state.completed_sources} از {state.total_sources} منبع · {state.overall_progress_percent}٪</p></>}
-      {state?.failed_sources?.map(source => <p key={source.key}>{source.label} · {source.error}</p>)}
-      {finished && <><p>{state.failed_sources.length ? "گزارش ناقص است. " : ""}اکسل شامل آگهی‌های ثبت‌شده با تاریخ اعلام امروز به وقت تهران است.</p>
-        <ExcelExportButton key={run} autoStart={sessionStorage.getItem(storageKey) === run} onAutoStart={() => sessionStorage.removeItem(storageKey)} href={report} filename="setadscope_today_auctions.xlsx"/></>}
-    </dialog>
-  </section>;
+  useEffect(() => {
+    if (stopping && terminal) {
+      modal.current.close(); setMini(false); setJob(null); setState(null); setStopping(false);
+      sessionStorage.removeItem(key);
+    }
+  }, [stopping, terminal]);
+
+  async function close() {
+    if (starting.current || stopping) return;
+    if (job && !exportDone && state?.status !== "cancelled") {
+      if (!window.confirm("عملیات متوقف شود؟")) return;
+      if (!terminal) {
+        setStopping(true);
+        try {
+          await quickRequest(job.kind, "stop", job.id);
+          return;
+        } catch { setStopping(false); setError("درخواست توقف ارسال نشد."); return; }
+      }
+    }
+    modal.current.close();
+    setMini(false); setJob(null); setState(null); setStopping(false);
+    sessionStorage.removeItem(key);
+  }
+
+  return <div className="quick-actions">
+    {visible && <section className="dashboard-content"><h1>دسترسی سریع</h1>
+      <div className="quick-grid">{Object.entries(actions).map(([kind, item]) =>
+        <button key={kind} className="quick-card" disabled={job && job.kind !== kind} onClick={() => start(kind)}>
+          <item.icon size={42}/><strong>{item.title}</strong><span>{item.text}</span>
+        </button>)}</div></section>}
+    {mini && action && <button className="quick-mini" onClick={restore}>{action.title} · {fa(state?.overall_progress_percent)}٪</button>}
+    <dialog ref={modal} aria-labelledby="quick-title" onCancel={e => { e.preventDefault(); close(); }}>
+      <button className="quick-close" disabled={starting.current || stopping} onClick={close} aria-label="بستن"><X size={18}/></button>
+      <button className="quick-close" onClick={() => { modal.current.close(); setMini(true); }} aria-label="کوچک کردن"><Minus size={18}/></button>
+      <h2 id="quick-title">{action?.title}</h2>
+      <p role="status">{error || (stopping && "در حال توقف عملیات…") || state?.message || "در حال شروع عملیات…"}</p>
+      {state?.total_sources > 0 && <><progress max="100" value={state.overall_progress_percent}/><p>{fa(state.completed_sources)} از {fa(state.total_sources)} منبع · {fa(state.overall_progress_percent)}٪</p></>}
+      {state?.failed_sources?.map(s => <p key={s.key}>{s.label} · {s.error}</p>)}
+      {!stopping && terminal && state.status !== "cancelled" && action && <><p>{state.failed_sources?.length > 0 && "گزارش ناقص است."}</p>
+        <ExcelExportButton autoStart={!exportDone} onComplete={() => { setExportDone(true); sessionStorage.removeItem(key); }}
+          href={"/api/" + job.kind + "/export.xlsx?" + action.filters + "&matched_only=false&sort_by=announcement_at&sort_dir=desc"}
+          filename={action.title + ".xlsx"} /></>}
+    </dialog></div>;
 }

@@ -8,6 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Tender
+from app.services.date_normalization import persian_timestamp
 from app.db.session import get_db
 from app.services.listing_filters import announced_today, date_range
 from app.excel_api import ExportProgress, excel_download, track_excel_export
@@ -281,11 +282,11 @@ def export_tenders(
                 excel_safe(row.province),
                 excel_safe(row.city),
                 excel_safe(row.description),
-                excel_safe(row.public_notification_date),
-                excel_safe(row.documents_deadline_date),
-                excel_safe(row.proposal_deadline_date),
-                excel_safe(row.opening_date),
-                excel_safe(row.state),
+                persian_timestamp(row.public_notification_at or row.public_notification_date),
+                persian_timestamp(row.documents_deadline_at or row.documents_deadline_date),
+                persian_timestamp(row.proposal_deadline_at or row.proposal_deadline_date),
+                persian_timestamp(row.opening_at or row.opening_date),
+                excel_safe("منتشر شده" if row.state == "PUBLISHED" else row.state),
             ]
 
     return excel_download(

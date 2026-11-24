@@ -283,7 +283,7 @@ def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
             headers = [cell.value for cell in sheet[1]]
             assert "مجموعه" in headers
             group_column = headers.index("مجموعه") + 1
-            assert sheet.cell(row=2, column=group_column).value == "amval_tamliki"
+            assert sheet.cell(row=2, column=group_column).value == "سازمان اموال تملیکی"
         finally:
             db.execute(delete(Auction).where(Auction.source_party_id == source_id))
             db.commit()

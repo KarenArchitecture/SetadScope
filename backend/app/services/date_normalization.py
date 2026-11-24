@@ -148,3 +148,25 @@ def parse_filter_bound(value: str | None, *, end_of_day: bool = False) -> dateti
     if parsed and end_of_day and not re.search(r"\d{1,2}:\d{2}", raw):
         return parsed.replace(hour=23, minute=59, second=59, microsecond=999999)
     return parsed
+
+
+def persian_timestamp(value: object) -> str:
+    instant = parse_setad_datetime(value)
+    if instant is None:
+        return ""
+    local = instant.astimezone(TEHRAN)
+    year = local.year - 621
+    first_day = _jalali_to_gregorian(year, 1, 1)
+    if local.date() < first_day:
+        year -= 1
+        first_day = _jalali_to_gregorian(year, 1, 1)
+    offset = (local.date() - first_day).days
+    if offset < 186:
+        month, day = divmod(offset, 31)
+        month += 1
+    else:
+        month, day = divmod(offset - 186, 30)
+        month += 7
+    return f"{year:04}/{month:02}/{day + 1:02}  {local:%H:%M}".translate(
+        str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+    )

@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from app.raw_cleanup import prune_previous_runs
 from app.db.models import Auction, AppSetting, IngestionRun
+from app.services.date_normalization import persian_timestamp
 from app.db.session import SessionLocal, get_db
 from app.jobs import latest_run_files
 from app.services.ingestion import RAW_DIR, import_pages
@@ -261,6 +262,16 @@ def update_collection_state(state_key: str, **values) -> dict:
         return dict(collection_state)
 
 
+quick_processes = {}
+
+
+def check_stop(state_key):
+    with collection_lock:
+        batch = collection_states.get(active_batch_key(), {})
+        if batch.get("stop_requested") and batch.get("current_source_key") == state_key:
+            raise RuntimeError("جمع‌آوری به درخواست کاربر متوقف شد.")
+
+
 def run_collection_job(
     kind: str,
     collection_group: str | None = None,
@@ -322,6 +333,11 @@ def run_collection_job(
 
         partial_manifest = None
         failure_message = None
+        with collection_lock:
+            quick_processes[state_key] = process
+            batch = collection_states.get(active_batch_key(), {})
+            if batch.get("stop_requested") and batch.get("current_source_key") == state_key:
+                process.terminate()
         if process.stdout is not None:
             for raw_line in process.stdout:
                 line = raw_line.rstrip()
@@ -351,6 +367,7 @@ def run_collection_job(
                     )
 
         return_code = process.wait()
+        check_stop(state_key)
         output = "\n".join(output_lines)[-5000:]
         incomplete = return_code != 0
         reason = failure_message or f"{state_key} collector exited with code {return_code}"
@@ -381,6 +398,7 @@ def run_collection_job(
             raise RuntimeError("Collector completed but no raw response page files were found.")
 
         def report_import_progress(progress: dict) -> None:
+            check_stop(state_key)
             completed = int(progress.get("pages_completed", 0))
             total = max(int(progress.get("total_pages", 0)), 1)
             percent = 85 + int(15 * completed / total)
@@ -453,6 +471,11 @@ def run_collection_job(
             output="\n".join(output_lines)[-5000:],
         )
 
+    finally:
+        with collection_lock:
+            if quick_processes.get(state_key) is locals().get("process"):
+                quick_processes.pop(state_key, None)
+
 def run_global_collection_job() -> None:
     run_collection_batch("global", GLOBAL_COLLECTION_SOURCES)
 
@@ -465,6 +488,8 @@ def run_collection_batch(batch_key: str, sources: tuple[dict, ...]) -> None:
         label = source["label"]
         with collection_lock:
             batch_state = collection_states[batch_key]
+            if batch_state.get("stop_requested"):
+                break
             batch_state.update({
                 "phase": "collecting",
                 "current_source_index": index,
@@ -555,6 +580,10 @@ def run_collection_batch(batch_key: str, sources: tuple[dict, ...]) -> None:
 
     with collection_lock:
         batch_state = collection_states[batch_key]
+        if batch_state.get("stop_requested"):
+            batch_state.update(status="cancelled", phase="cancelled", message="عملیات متوقف شد.",
+                               current_source_key=None, finished_at=datetime.now(timezone.utc).isoformat())
+            return
         failed_count = len(batch_state["failed_sources"])
         successful_count = int(batch_state["successful_sources"])
         final_status = "completed_with_errors" if failed_count else "completed"
@@ -897,6 +926,41 @@ def reserve_collection_batch(batch_key: str, initial: dict, *, include_tenders: 
         return dict(initial)
 
 
+QuickKind = Literal["auctions", "tenders"]
+
+
+@app.post("/api/quick/{kind}/run", status_code=202)
+def start_quick(kind: QuickKind, background_tasks: BackgroundTasks):
+    sources = auction_batch_sources("all") if kind == "auctions" else tuple(
+        source for source in GLOBAL_COLLECTION_SOURCES if source["kind"] == "tenders"
+    )
+    key = f"quick:{kind}"
+    state = reserve_collection_batch(key, initial_global_collection_state(total_sources=len(sources)),
+                                     include_tenders=kind == "tenders")
+    background_tasks.add_task(run_collection_batch, key, sources)
+    return state
+
+
+@app.get("/api/quick/{kind}/status")
+def quick_status(kind: QuickKind):
+    with collection_lock:
+        return dict(collection_states.get(f"quick:{kind}", {"status": "idle"}))
+
+
+@app.post("/api/quick/{kind}/stop")
+def stop_quick(kind: QuickKind, started_at: str):
+    with collection_lock:
+        batch = collection_states.get(f"quick:{kind}", {})
+        if batch.get("started_at") != started_at:
+            raise HTTPException(409, "این اجرا دیگر فعال نیست.")
+        if batch["status"] == "running":
+            batch["stop_requested"] = True
+            process = quick_processes.get(batch.get("current_source_key"))
+            if process and process.poll() is None:
+                process.terminate()
+        return dict(batch)
+
+
 @app.get("/api/collection/{kind}/status")
 def get_collection_status(
     kind: Literal["auctions", "tenders"],
@@ -924,7 +988,7 @@ def start_collection(
 
     state_key = "tenders"
     with collection_lock:
-        if collection_states["global"]["status"] == "running":
+        if active_batch_key() in ("global", "quick:tenders"):
             raise HTTPException(status_code=409, detail="A global collection is already running.")
         state = collection_states[state_key]
         if state["status"] in {"collecting", "importing"}:
@@ -1188,15 +1252,15 @@ def export_auctions(
     def export_rows():
         for a in db.scalars(query).yield_per(500):
             yield [
-                excel_safe(a.source_party_id), a.collection_group, a.category,
+                excel_safe(a.source_party_id), COLLECTION_GROUP_LABELS.get(a.collection_group, a.collection_group), AUCTION_CATEGORY_LABELS.get(a.category, a.category),
                 excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
                 excel_safe(a.description), excel_safe(", ".join(a.matched_keywords or [])),
                 excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
-                str(a.site_show_start_at or a.publish_start_at or ""),
-                str(a.proposal_start or ""), str(a.proposal_deadline or ""),
-                str(a.document_deadline or ""),
+                persian_timestamp(a.site_show_start_at or a.publish_start_at),
+                persian_timestamp(a.proposal_start), persian_timestamp(a.proposal_deadline),
+                persian_timestamp(a.document_deadline),
                 a.base_total_price, a.trust_amount,
-                str(a.winner_announce_at or ""), str(a.opening_at or ""),
+                persian_timestamp(a.winner_announce_at), persian_timestamp(a.opening_at),
                 excel_safe(a.auction_no), excel_safe(a.source_url),
             ]
 

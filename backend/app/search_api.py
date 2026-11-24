@@ -10,6 +10,7 @@ from sqlalchemy import func, or_, select, union_all
 from sqlalchemy.orm import Session
 
 from app.listing_types import LISTING_TYPES
+from app.services.date_normalization import persian_timestamp
 from app.db.session import get_db
 from app.excel_api import ExportProgress, excel_download, track_excel_export
 from app.services.listing_filters import announced_today, date_range
@@ -347,14 +348,14 @@ def export_global_search(
                 excel_safe(row["organization"]),
                 excel_safe(row["province"]),
                 excel_safe(row["city"]),
-                announcement_at.isoformat() if announcement_at else "",
-                deadline_at.isoformat() if deadline_at else "",
+                persian_timestamp(announcement_at),
+                persian_timestamp(deadline_at),
                 row["base_total_price"],
-                row["money_unit"] or "",
-                excel_safe(row["state"]),
+                "ریال" if row["money_unit"] == "IRR" else row["money_unit"] or "",
+                excel_safe("منتشر شده" if row["state"] == "PUBLISHED" else row["state"]),
                 "بله" if row["has_keyword_match"] else "خیر",
                 excel_safe(row["type_name"]),
-                row["documents_deadline_at"].isoformat() if row["documents_deadline_at"] else "",
+                persian_timestamp(row["documents_deadline_at"]),
             ]
 
     return excel_download(

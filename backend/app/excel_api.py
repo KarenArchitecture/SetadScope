@@ -20,6 +20,7 @@ class ProgressSnapshot:
 
 @dataclass
 class ExportProgress:
+    cancelled: bool = False
     snapshot: ProgressSnapshot = ProgressSnapshot("counting")
 
 
@@ -48,6 +49,14 @@ async def excel_progress(export_id: UUID, response: Response):
     return progress.snapshot if progress else None
 
 
+@router.delete("/api/excel/progress/{export_id}")
+async def cancel_excel(export_id: UUID):
+    progress = active_exports.get(export_id)
+    if progress:
+        progress.cancelled = True
+    return {"ok": True}
+
+
 def excel_download(
     db, query, progress: ExportProgress | None, filename: str,
     sheet_name, table_name, headers, rows, *, widths, numeric_columns=(),
@@ -59,6 +68,8 @@ def excel_download(
         progress.snapshot = ProgressSnapshot("writing", total=total)
         processed = 0
         for row in rows():
+            if progress.cancelled:
+                raise HTTPException(409, "خروجی لغو شد.")
             yield row
             processed += 1
             progress.snapshot = ProgressSnapshot("writing", processed, total)

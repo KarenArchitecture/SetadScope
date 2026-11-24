@@ -11,6 +11,7 @@ export default function ExcelExportButton({
   href,
   autoStart = false,
   onAutoStart,
+  onComplete,
   filename = "setadscope_export.xlsx",
   label = "خروجی Excel",
 }) {
@@ -118,6 +119,7 @@ export default function ExcelExportButton({
         downloadLink.download = filename;
         document.body.appendChild(downloadLink);
         downloadLink.click();
+        onComplete?.();
         downloadLink.remove();
         window.setTimeout(() => window.URL.revokeObjectURL(objectUrl), 1000);
 
@@ -156,6 +158,7 @@ export default function ExcelExportButton({
     };
 
     request.onabort = () => {
+      fetch(progressUrl, { method: "DELETE" }).catch(() => {});
       stopPolling();
       requestRef.current = null;
     };

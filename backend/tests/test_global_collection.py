@@ -232,3 +232,29 @@ def test_auction_batch_reservation_blocks_overlapping_work_before_first_source()
         assert duplicate.value.status_code == global_request.value.status_code == individual.value.status_code == 409
     finally:
         _restore_states(snapshot)
+
+
+def test_quick_stop_terminates_current_process_and_skips_remaining_sources(monkeypatch):
+    from unittest.mock import Mock
+    from fastapi import BackgroundTasks
+
+    snapshot = _snapshot_states()
+    calls = []
+    try:
+        tasks = BackgroundTasks()
+        job = main.start_quick("auctions", tasks)
+        def stop_during_first_source(kind, group, category):
+            key = main.collection_state_key(group, category)
+            process = Mock()
+            process.poll.return_value = None
+            monkeypatch.setitem(main.quick_processes, key, process)
+            main.stop_quick("auctions", job["started_at"])
+            process.terminate.assert_called_once()
+            calls.append(key)
+        monkeypatch.setattr(main, "run_collection_job", stop_during_first_source)
+        task, = tasks.tasks
+        task.func(*task.args)
+        assert len(calls) == 1
+        assert main.quick_status("auctions")["status"] == "cancelled"
+    finally:
+        _restore_states(snapshot)

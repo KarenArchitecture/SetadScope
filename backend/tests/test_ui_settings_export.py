@@ -29,10 +29,10 @@ def test_excel_table_filters_and_numeric_cells():
     assert sheet["C2"].value == 190000.5
     # Width follows actual content instead of the configured maximum (45).
     assert 12 <= sheet.column_dimensions["B"].width < 45
-    assert sheet["A1"].font.name == "Calibri"
+    assert sheet["A1"].font.name == "Vazirmatn"
     assert sheet["A1"].font.sz == 13
     assert sheet["A1"].font.bold is True
-    assert sheet["B2"].font.name == "Calibri"
+    assert sheet["B2"].font.name == "Vazirmatn"
     assert sheet["B2"].font.sz == 12
     assert sheet["B2"].font.bold is True
     assert sheet["B2"].alignment.wrap_text is True
@@ -76,3 +76,9 @@ def test_configurable_keywords_without_changing_default_matching():
     assert "آلومینیوم" in matched_keywords("ضایعات آلومینیوم", keywords=("آلومینیوم",))
     assert "چوب" not in matched_keywords("فروش چوب", keywords=("آلومینیوم",))
     assert "چوب" in matched_keywords("فروش چوب")
+
+
+def test_export_dates_use_tehran_and_persian_digits():
+    from app.services.date_normalization import persian_timestamp
+    assert persian_timestamp("2026-11-24T15:30:00+00:00") == "۱۴۰۵/۰۹/۰۳  ۱۹:۰۰"
+    assert persian_timestamp("2026-11-24T22:30:00+00:00") == "۱۴۰۵/۰۹/۰۴  ۰۲:۰۰"

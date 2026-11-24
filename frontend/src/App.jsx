@@ -158,7 +158,8 @@ export default function App() {
             onNavigate={navigate}
             initialQuery={initialQuery}
           />
-          {page === "quick" ? <QuickActions /> : page === "settings"
+          <QuickActions visible={page === "quick"} />
+          {page === "quick" ? null : page === "settings"
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
               ? <GlobalSearchPage key={routeVersion} query={initialQuery} onQueryChange={updateTableQuery} />

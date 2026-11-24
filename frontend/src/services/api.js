@@ -121,3 +121,10 @@ export async function updateKeywords(keywords) {
   const response = await api.put("/api/settings/keywords", { keywords });
   return response.data;
 }
+
+export async function quickRequest(kind, action, startedAt) {
+  const url = "/api/quick/" + kind + "/" + action;
+  const response = action === "status" ? await api.get(url) :
+    await api.post(url, null, { params: { started_at: startedAt } });
+  return response.data;
+}
