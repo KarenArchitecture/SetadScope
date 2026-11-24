@@ -14,20 +14,60 @@ export default function ExcelExportButton({
 }) {
   const [progress, setProgress] = useState({ status: "idle", percent: null, error: "" });
   const requestRef = useRef(null);
+  const completedTimer = useRef(null);
   const isBusy = progress.status === "preparing" || progress.status === "downloading";
 
-  useEffect(() => () => requestRef.current?.abort(), []);
+  useEffect(() => () => {
+    requestRef.current?.abort();
+    window.clearTimeout(completedTimer.current);
+  }, []);
 
   function handleExport() {
-    if (isBusy || !href) return;
+    if (requestRef.current || !href) return;
+    window.clearTimeout(completedTimer.current);
 
     const request = new XMLHttpRequest();
     requestRef.current = request;
-    setProgress({ status: "preparing", percent: null, error: "" });
+    setProgress({ status: "preparing", phase: "counting", percent: null, error: "" });
 
     const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/$/, "");
-    const requestUrl = /^https?:\/\//i.test(href) ? href : apiBaseUrl + href;
-    request.open("GET", requestUrl, true);
+    const requestUrl = new URL(/^https?:\/\//i.test(href) ? href : apiBaseUrl + href, window.location.origin);
+    const exportId = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) =>
+      byte.toString(16).padStart(2, "0"),
+    ).join("");
+    requestUrl.searchParams.set("export_id", exportId);
+    const progressUrl = new URL("/api/excel/progress/" + exportId, requestUrl);
+    const pollController = new AbortController();
+    let pollTimer;
+
+    function stopPolling() {
+      window.clearTimeout(pollTimer);
+      pollController.abort();
+    }
+
+    async function pollProgress() {
+      try {
+        const response = await fetch(progressUrl, { signal: pollController.signal, cache: "no-store" });
+        const snapshot = response.ok ? await response.json() : null;
+        if (!snapshot || pollController.signal.aborted) return;
+
+        const { phase, processed, total } = snapshot;
+        const percent = phase === "finalizing"
+          ? 100
+          : total > 0 ? Math.min(100, Math.floor(processed * 100 / total)) : null;
+        setProgress((current) => current.status === "preparing"
+          ? { ...current, phase, processed, total, percent }
+          : current);
+      } catch {
+        // The workbook request reports download and server errors independently.
+      } finally {
+        if (!pollController.signal.aborted) {
+          pollTimer = window.setTimeout(pollProgress, 500);
+        }
+      }
+    }
+
+    request.open("GET", requestUrl);
     request.responseType = "blob";
     request.setRequestHeader(
       "Accept",
@@ -36,11 +76,8 @@ export default function ExcelExportButton({
 
     request.onreadystatechange = () => {
       if (request.readyState === XMLHttpRequest.HEADERS_RECEIVED && request.status >= 200 && request.status < 300) {
-        setProgress((current) => (
-          current.status === "preparing"
-            ? { ...current, status: "downloading" }
-            : current
-        ));
+        stopPolling();
+        setProgress({ status: "downloading", percent: 0, error: "" });
       }
     };
 
@@ -52,9 +89,10 @@ export default function ExcelExportButton({
     };
 
     request.onload = async () => {
-      requestRef.current = null;
+      stopPolling();
 
       if (request.status >= 200 && request.status < 300) {
+        requestRef.current = null;
         const blob = request.response;
         if (!blob || blob.size === 0) {
           const message = "فایل خروجی خالی است؛ آماده‌سازی خروجی ناموفق بود.";
@@ -74,7 +112,7 @@ export default function ExcelExportButton({
 
         setProgress({ status: "complete", percent: 100, error: "" });
         notifyToast("success", "فایل Excel آماده و دانلود شد.", { duration: 3500 });
-        window.setTimeout(() => {
+        completedTimer.current = window.setTimeout(() => {
           setProgress((current) => (
             current.status === "complete"
               ? { status: "idle", percent: null, error: "" }
@@ -88,15 +126,18 @@ export default function ExcelExportButton({
       try {
         const payload = await request.response.text();
         const parsed = JSON.parse(payload);
-        if (parsed.detail) message = parsed.detail;
+        if (typeof parsed.detail === "string") message = parsed.detail;
       } catch {
         // Keep the safe, user-facing fallback message.
       }
+      if (requestRef.current !== request) return;
+      requestRef.current = null;
       setProgress({ status: "error", percent: null, error: message });
       notifyToast("error", message, { duration: 5500 });
     };
 
     request.onerror = () => {
+      stopPolling();
       requestRef.current = null;
       const message = "ارتباط با سرور هنگام تهیه خروجی Excel قطع شد.";
       setProgress({ status: "error", percent: null, error: message });
@@ -104,12 +145,22 @@ export default function ExcelExportButton({
     };
 
     request.onabort = () => {
+      stopPolling();
       requestRef.current = null;
-      setProgress({ status: "idle", percent: null, error: "" });
     };
 
     request.send();
+    pollTimer = window.setTimeout(pollProgress, 250);
   }
+
+  const preparationLabel = {
+    counting: "در حال شمارش ردیف‌ها…",
+    writing: "در حال نوشتن ردیف‌ها…",
+    finalizing: "در حال بسته‌بندی فایل…",
+  }[progress.phase];
+  const rowCount = progress.status === "preparing" && progress.total !== null && progress.total !== undefined
+    ? formatNumber(progress.processed) + " از " + formatNumber(Math.max(progress.total, progress.processed)) + " ردیف"
+    : "";
 
   return (
     <div className="excel-export">
@@ -147,7 +198,7 @@ export default function ExcelExportButton({
           <div className="excel-export__progress-copy">
             <span>
               {progress.status === "preparing"
-                ? "در حال آماده‌سازی فایل..."
+                ? preparationLabel
                 : progress.percent === null
                   ? "در حال دریافت فایل..."
                   : "در حال دانلود فایل..."}
@@ -156,10 +207,11 @@ export default function ExcelExportButton({
               <strong>{formatNumber(progress.percent)}٪</strong>
             )}
           </div>
+          {rowCount && <span className="excel-export__rows">{rowCount}</span>}
           <div
             className="excel-export__track"
             role="progressbar"
-            aria-label="پیشرفت آماده‌سازی و دریافت خروجی Excel"
+            aria-label={progress.status === "preparing" ? "پیشرفت نوشتن ردیف‌های Excel" : "پیشرفت دانلود Excel"}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progress.percent === null ? undefined : progress.percent}

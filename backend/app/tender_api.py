@@ -1,18 +1,16 @@
 from __future__ import annotations
 
-from io import BytesIO
 from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Tender
 from app.db.session import get_db
-from app.services.date_normalization import parse_filter_bound
-from app.services.excel_export import build_excel
+from app.services.listing_filters import announced_today, date_range
+from app.excel_api import ExportProgress, excel_download, track_excel_export
 
 
 router = APIRouter(tags=["tenders"])
@@ -69,15 +67,6 @@ def tender_to_dict(tender: Tender, include_raw: bool = False) -> dict:
     return result
 
 
-def _parse_bound(value: str | None, *, end_of_day: bool = False):
-    if not value:
-        return None
-    parsed = parse_filter_bound(value, end_of_day=end_of_day)
-    if parsed is None:
-        raise HTTPException(status_code=422, detail=f"Invalid date filter: {value}")
-    return parsed
-
-
 def filtered_tender_query(
     search: str | None,
     province: str | None = None,
@@ -91,6 +80,7 @@ def filtered_tender_query(
     documents_deadline_from: str | None = None,
     documents_deadline_to: str | None = None,
     matched_only: bool = False,
+    today_only: bool = False,
     status: Literal["all", "active", "archive"] = "all",
 ):
     query = select(Tender)
@@ -124,30 +114,13 @@ def filtered_tender_query(
     if type_name:
         query = query.where(Tender.type_name == type_name)
 
-    announcement_start = _parse_bound(announcement_from)
-    announcement_end = _parse_bound(announcement_to, end_of_day=True)
-    deadline_start = _parse_bound(deadline_from)
-    deadline_end = _parse_bound(deadline_to, end_of_day=True)
-    documents_start = _parse_bound(documents_deadline_from)
-    documents_end = _parse_bound(documents_deadline_to, end_of_day=True)
-    if announcement_start and announcement_end and announcement_start > announcement_end:
-        raise HTTPException(status_code=422, detail="announcement_from cannot exceed announcement_to")
-    if deadline_start and deadline_end and deadline_start > deadline_end:
-        raise HTTPException(status_code=422, detail="deadline_from cannot exceed deadline_to")
-    if documents_start and documents_end and documents_start > documents_end:
-        raise HTTPException(status_code=422, detail="documents_deadline_from cannot exceed documents_deadline_to")
-    if announcement_start:
-        query = query.where(Tender.public_notification_at >= announcement_start)
-    if announcement_end:
-        query = query.where(Tender.public_notification_at <= announcement_end)
-    if deadline_start:
-        query = query.where(Tender.proposal_deadline_at >= deadline_start)
-    if deadline_end:
-        query = query.where(Tender.proposal_deadline_at <= deadline_end)
-    if documents_start:
-        query = query.where(Tender.documents_deadline_at >= documents_start)
-    if documents_end:
-        query = query.where(Tender.documents_deadline_at <= documents_end)
+    query = query.where(
+        *date_range(Tender.public_notification_at, "announcement", announcement_from, announcement_to),
+        *date_range(Tender.proposal_deadline_at, "deadline", deadline_from, deadline_to),
+        *date_range(Tender.documents_deadline_at, "documents_deadline", documents_deadline_from, documents_deadline_to),
+    )
+    if today_only:
+        query = query.where(*announced_today(Tender.public_notification_at))
     return query
 
 
@@ -212,6 +185,7 @@ def excel_safe(value):
 def get_tenders(
     search: str | None = None,
     matched_only: bool = False,
+    today_only: bool = False,
     status: Literal["all", "active", "archive"] = "all",
     province: str | None = None,
     city: str | None = None,
@@ -236,7 +210,7 @@ def get_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only, status=status,
+        matched_only=matched_only, status=status, today_only=today_only,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -262,6 +236,7 @@ def get_tenders(
 def export_tenders(
     search: str | None = None,
     matched_only: bool = False,
+    today_only: bool = False,
     status: Literal["all", "active", "archive"] = "all",
     province: str | None = None,
     city: str | None = None,
@@ -275,6 +250,7 @@ def export_tenders(
     documents_deadline_to: str | None = None,
     sort_by: str = Query("public_notification_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
@@ -283,7 +259,7 @@ def export_tenders(
         search, province, city, state, type_name,
         announcement_from, announcement_to, deadline_from, deadline_to,
         documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only, status=status,
+        matched_only=matched_only, status=status, today_only=today_only,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -293,36 +269,29 @@ def export_tenders(
         "استان", "شهر", "شرح", "تاریخ انتشار", "مهلت دریافت اسناد",
         "مهلت پیشنهاد", "تاریخ بازگشایی", "وضعیت",
     ]
-    rows = (
-        [
-            excel_safe(row.source_tender_id),
-            excel_safe(row.tender_number),
-            excel_safe(row.title),
-            excel_safe(row.type_name),
-            excel_safe(row.organization),
-            excel_safe(row.province),
-            excel_safe(row.city),
-            excel_safe(row.description),
-            excel_safe(row.public_notification_date),
-            excel_safe(row.documents_deadline_date),
-            excel_safe(row.proposal_deadline_date),
-            excel_safe(row.opening_date),
-            excel_safe(row.state),
-        ]
-        for row in db.scalars(query).yield_per(500)
-    )
-    data = build_excel(
-        "مناقصه‌ها", "SetadScopeTenders", headers, rows,
-        widths=[25, 24, 53, 28, 40, 21, 21, 66, 25, 25, 25, 25, 20],
-    )
 
-    return StreamingResponse(
-        data,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": "attachment; filename=setadscope_tenders.xlsx",
-            "Content-Length": str(data.getbuffer().nbytes),
-        },
+    def export_rows():
+        for row in db.scalars(query).yield_per(500):
+            yield [
+                excel_safe(row.source_tender_id),
+                excel_safe(row.tender_number),
+                excel_safe(row.title),
+                excel_safe(row.type_name),
+                excel_safe(row.organization),
+                excel_safe(row.province),
+                excel_safe(row.city),
+                excel_safe(row.description),
+                excel_safe(row.public_notification_date),
+                excel_safe(row.documents_deadline_date),
+                excel_safe(row.proposal_deadline_date),
+                excel_safe(row.opening_date),
+                excel_safe(row.state),
+            ]
+
+    return excel_download(
+        db, query, progress, "setadscope_tenders.xlsx",
+        "مناقصه‌ها", "SetadScopeTenders", headers, export_rows,
+        widths=[25, 24, 53, 28, 40, 21, 21, 66, 25, 25, 25, 25, 20],
     )
 
 

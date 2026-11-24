@@ -1359,7 +1359,7 @@
 .auction-category-nav {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 12px;
   margin-bottom: 14px;
@@ -1373,6 +1373,7 @@
 .auction-category-nav__tabs {
   display: flex;
   align-items: center;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 5px;
 }
@@ -1442,9 +1443,7 @@
 
   .auction-category-nav__tabs {
     width: 100%;
-    flex-wrap: nowrap;
-    overflow-x: auto;
-    scrollbar-width: thin;
+    flex-wrap: wrap;
   }
 
   .auction-category-nav__tab {

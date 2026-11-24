@@ -529,3 +529,110 @@ def test_global_search_combines_auctions_and_tenders_with_server_side_filters(tm
                 delete(Tender).where(Tender.source_tender_id == tender_source_id)
             )
             db.commit()
+
+
+def test_combined_auction_selection_and_today_filter_match_excel(monkeypatch):
+    from datetime import datetime, timedelta
+    from io import BytesIO
+    from uuid import uuid4
+
+    from openpyxl import load_workbook
+
+    from app.services import listing_filters
+    from app.services.date_normalization import TEHRAN
+
+    midnight = datetime(2026, 11, 24, tzinfo=TEHRAN)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (midnight + timedelta(hours=1)).astimezone(tz)
+
+    monkeypatch.setattr(listing_filters, "datetime", FixedDateTime)
+    fixtures = [
+        ("movable", "executive_agencies", midnight),
+        ("immovable", "executive_agencies", midnight - timedelta(microseconds=1)),
+        ("rental", "executive_agencies", midnight + timedelta(days=1)),
+        ("clearance", "shared", midnight + timedelta(hours=4)),
+        ("movable", "amval_tamliki", midnight),
+    ]
+    ids = [f"uiux-selection-{index}" for index in range(len(fixtures))]
+    with SessionLocal() as db, TestClient(app) as client:
+        try:
+            db.add_all(
+                Auction(
+                    source_party_id=source_id, category=category, collection_group=group,
+                    title=source_id, publish_start_at=published, raw_payload={},
+                )
+                for source_id, (category, group, published) in zip(ids, fixtures)
+            )
+            db.commit()
+            params = {"search": "uiux-selection", "matched_only": False, "category": "all"}
+            combined = client.get("/api/auctions", params=params)
+            assert combined.status_code == 200, combined.text
+            assert combined.json()["total"] == 5
+
+            params.update(
+                categories=["movable", "clearance"], collection_group="executive_agencies", today_only=True,
+            )
+            page = client.get("/api/auctions", params=params)
+            assert page.status_code == 200, page.text
+            assert {item["source_party_id"] for item in page.json()["items"]} == {ids[0], ids[3]}
+
+            export_id = uuid4().hex
+            workbook = client.get("/api/auctions/export.xlsx", params={**params, "export_id": export_id})
+            assert workbook.status_code == 200, workbook.text
+            sheet = load_workbook(BytesIO(workbook.content)).active
+            assert {cell.value for cell in sheet["A"][1:]} == {ids[0], ids[3]}
+            assert client.get(f"/api/excel/progress/{export_id}").json() is None
+
+            params["collection_group"] = "all"
+            params.pop("categories")
+            page = client.get("/api/auctions", params=params)
+            assert {item["source_party_id"] for item in page.json()["items"]} == {ids[0], ids[3], ids[4]}
+        finally:
+            db.rollback()
+            db.execute(delete(Auction).where(Auction.source_party_id.in_(ids)))
+            db.commit()
+
+
+def test_global_advanced_tender_filters_match_excel():
+    from datetime import datetime
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.db.models import Tender
+    from app.services.date_normalization import TEHRAN
+
+    notice = datetime(2026, 11, 24, 9, tzinfo=TEHRAN)
+    ids = ["uiux-tender-1", "uiux-tender-2"]
+    with SessionLocal() as db, TestClient(app) as client:
+        try:
+            db.add_all(
+                Tender(
+                    source_tender_id=source_id, title=source_id, city=city, province="تهران",
+                    state="PUBLISHED", type_name="عمومی", public_notification_at=notice,
+                    documents_deadline_at=notice, raw_payload={},
+                )
+                for source_id, city in zip(ids, ("ری", "تهران"))
+            )
+            db.commit()
+            params = {
+                "search": "uiux-tender", "province": "تهران", "city": "ری", "type_name": "عمومی",
+                "state": "PUBLISHED", "announcement_from": "2026-11-24", "documents_deadline_to": "2026-11-24",
+            }
+            page = client.get("/api/search", params=params)
+            assert page.status_code == 200, page.text
+            assert [item["record_number"] for item in page.json()["items"]] == ids[:1]
+            assert page.json()["summary"]["tenders"] == 1
+            assert {"province": "تهران", "city": "ری"} in page.json()["filter_options"]["cities"]
+
+            workbook = client.get("/api/search/export.xlsx", params=params)
+            assert workbook.status_code == 200, workbook.text
+            sheet = load_workbook(BytesIO(workbook.content)).active
+            assert [cell.value for cell in sheet["F"][1:]] == ids[:1]
+        finally:
+            db.rollback()
+            db.execute(delete(Tender).where(Tender.source_tender_id.in_(ids)))
+            db.commit()

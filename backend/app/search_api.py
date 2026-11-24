@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Literal
+from decimal import Decimal
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
-from sqlalchemy import Numeric, String, Text, cast, func, literal, or_, select, union_all
+from sqlalchemy import DateTime, Numeric, String, Text, cast, func, literal, or_, select, union_all
 from sqlalchemy.orm import Session
 
 from app.db.models import Auction, Tender
 from app.db.session import get_db
-from app.services.excel_export import build_excel
+from app.excel_api import ExportProgress, excel_download, track_excel_export
+from app.services.listing_filters import announced_today, date_range
 from setad_scope.collectors.auction_sources.registry import resolve_collection_group
 
 
@@ -43,7 +45,49 @@ SORT_COLUMNS = {
     "record_type": "record_type",
     "source": "source",
     "collection_group": "collection_group",
+    "state": "state",
+    "documents_deadline_at": "documents_deadline_at",
+    "category": "category",
 }
+
+
+@dataclass
+class AdvancedSearchFilters:
+    state: str | None = None
+    type_name: str | None = None
+    announcement_from: str | None = None
+    announcement_to: str | None = None
+    deadline_from: str | None = None
+    deadline_to: str | None = None
+    documents_deadline_from: str | None = None
+    documents_deadline_to: str | None = None
+    price_min: Annotated[Decimal | None, Query(ge=0)] = None
+    price_max: Annotated[Decimal | None, Query(ge=0)] = None
+    today_only: bool = False
+
+    def conditions(self, rows):
+        columns = rows.c
+        conditions = [
+            *date_range(columns.announcement_at, "announcement", self.announcement_from, self.announcement_to),
+            *date_range(columns.deadline_at, "deadline", self.deadline_from, self.deadline_to),
+            *date_range(
+                columns.documents_deadline_at, "documents_deadline",
+                self.documents_deadline_from, self.documents_deadline_to,
+            ),
+        ]
+        if self.state:
+            conditions.append(columns.state == self.state)
+        if self.type_name:
+            conditions.append(columns.type_name == self.type_name)
+        if self.today_only:
+            conditions.extend(announced_today(columns.announcement_at))
+        if self.price_min is not None and self.price_max is not None and self.price_min > self.price_max:
+            raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
+        if self.price_min is not None:
+            conditions.append(columns.base_total_price >= self.price_min)
+        if self.price_max is not None:
+            conditions.append(columns.base_total_price <= self.price_max)
+        return conditions
 
 
 def _searchable_rows(
@@ -62,6 +106,7 @@ def _searchable_rows(
         Auction.source.label("source"),
         Auction.collection_group.label("collection_group"),
         Auction.category.label("category"),
+        cast(literal(None), String).label("type_name"),
         func.coalesce(Auction.title, Auction.item_title).label("title"),
         func.coalesce(
             Auction.auction_no,
@@ -74,6 +119,7 @@ def _searchable_rows(
         cast(Auction.state, Text).label("state"),
         func.coalesce(Auction.site_show_start_at, Auction.publish_start_at).label("announcement_at"),
         Auction.proposal_deadline.label("deadline_at"),
+        cast(literal(None), DateTime(timezone=True)).label("documents_deadline_at"),
         Auction.base_total_price.label("base_total_price"),
         Auction.money_unit.label("money_unit"),
         Auction.has_keyword_match.label("has_keyword_match"),
@@ -84,6 +130,7 @@ def _searchable_rows(
         Tender.source.label("source"),
         literal(None, type_=String(32)).label("collection_group"),
         literal(None, type_=String(24)).label("category"),
+        Tender.type_name.label("type_name"),
         Tender.title.label("title"),
         func.coalesce(Tender.tender_number, Tender.source_tender_id).label("record_number"),
         Tender.organization.label("organization"),
@@ -92,6 +139,7 @@ def _searchable_rows(
         cast(Tender.state, Text).label("state"),
         Tender.public_notification_at.label("announcement_at"),
         Tender.proposal_deadline_at.label("deadline_at"),
+        Tender.documents_deadline_at.label("documents_deadline_at"),
         literal(None, type_=Numeric(24, 2)).label("base_total_price"),
         literal(None, type_=String(30)).label("money_unit"),
         Tender.has_keyword_match.label("has_keyword_match"),
@@ -179,6 +227,7 @@ def global_search(
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
+    advanced: AdvancedSearchFilters = Depends(),
     db: Session = Depends(get_db),
 ):
     if sort_by not in SORT_COLUMNS:
@@ -190,22 +239,34 @@ def global_search(
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     rows = _searchable_rows(search, source, province, city, category, status, matched_only, collection_group)
-    base = select(rows)
+    filters = advanced.conditions(rows)
+    base = select(rows).where(*filters)
 
     # Tab counts stay meaningful when an auction-only category filter is active.
-    summary_rows = _searchable_rows(search, source, province, city, None, status, matched_only, collection_group)
-    auction_count = db.scalar(
-        select(func.count()).select_from(summary_rows).where(summary_rows.c.record_type == "auction")
-    ) or 0
-    tender_count = db.scalar(
-        select(func.count()).select_from(summary_rows).where(summary_rows.c.record_type == "tender")
-    ) or 0
+    summary_rows = rows
+    summary_filters = filters
+    if category is not None:
+        summary_rows = _searchable_rows(search, source, province, city, None, status, matched_only, collection_group)
+        summary_filters = advanced.conditions(summary_rows)
+    summary_query = (
+        select(summary_rows.c.record_type, func.count())
+        .where(*summary_filters)
+        .group_by(summary_rows.c.record_type)
+    )
+    counts = dict(db.execute(summary_query).all())
+    auction_count = counts.get("auction", 0)
+    tender_count = counts.get("tender", 0)
 
     if kind != "all":
         base = base.where(rows.c.record_type == kind)
+    if category is not None:
+        total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
+    else:
+        total = auction_count + tender_count if kind == "all" else counts.get(kind, 0)
 
-    total = db.scalar(select(func.count()).select_from(base.subquery())) or 0
     column = rows.c[SORT_COLUMNS[sort_by]]
+    if sort_by == "category":
+        column = func.coalesce(column, rows.c.type_name)
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
     records = db.execute(
         base.order_by(ordering, rows.c.record_type.asc(), rows.c.record_id.asc())
@@ -220,13 +281,25 @@ def global_search(
     source_values = db.scalars(
         select(sources_query.c.source).distinct().order_by(sources_query.c.source)
     ).all()
-    provinces_query = union_all(
-        select(Auction.province.label("province")).where(Auction.province.is_not(None)),
-        select(Tender.province.label("province")).where(Tender.province.is_not(None)),
-    ).subquery()
+    options_rows = _searchable_rows(None, None, None, None, None, "all", False, "all").c
+    scope = [options_rows.record_type == kind] if kind != "all" else []
     province_values = db.scalars(
-        select(provinces_query.c.province).distinct().order_by(provinces_query.c.province)
+        select(options_rows.province).where(*scope, options_rows.province.is_not(None))
+        .distinct().order_by(options_rows.province)
     ).all()
+    city_rows = db.execute(
+        select(options_rows.province, options_rows.city)
+        .where(*scope, options_rows.province.is_not(None), options_rows.city.is_not(None))
+        .distinct().order_by(options_rows.province, options_rows.city)
+    ).all()
+    states = db.scalars(
+        select(options_rows.state).where(*scope, options_rows.state.is_not(None))
+        .distinct().order_by(options_rows.state)
+    ).all()
+    types = db.scalars(
+        select(Tender.type_name).where(Tender.type_name.is_not(None))
+        .distinct().order_by(Tender.type_name)
+    ).all() if kind != "auction" else []
 
     items = []
     for row in records:
@@ -247,7 +320,7 @@ def global_search(
             )
         else:
             item["source_label"] = SOURCE_LABELS.get(item["source"], item["source"])
-        item["category_label"] = AUCTION_CATEGORIES.get(item["category"], "—")
+        item["category_label"] = AUCTION_CATEGORIES.get(item["category"]) or item["type_name"] or "—"
         items.append(item)
 
     archive_auction_count = db.scalar(select(func.count(Auction.id))) or 0
@@ -275,6 +348,9 @@ def global_search(
                 for value in source_values
             ],
             "provinces": list(province_values),
+            "cities": [{"province": province, "city": city} for province, city in city_rows],
+            "states": list(states),
+            "types": list(types),
             "categories": [
                 {"value": key, "label": value}
                 for key, value in AUCTION_CATEGORIES.items()
@@ -301,6 +377,8 @@ def export_global_search(
     collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    advanced: AdvancedSearchFilters = Depends(),
+    progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in SORT_COLUMNS:
@@ -314,11 +392,13 @@ def export_global_search(
     rows = _searchable_rows(
         search, source, province, city, category, status, matched_only, collection_group,
     )
-    query = select(rows)
+    query = select(rows).where(*advanced.conditions(rows))
     if kind != "all":
         query = query.where(rows.c.record_type == kind)
 
     column = rows.c[SORT_COLUMNS[sort_by]]
+    if sort_by == "category":
+        column = func.coalesce(column, rows.c.type_name)
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
     query = query.order_by(ordering, rows.c.record_type.asc(), rows.c.record_id.asc())
 
@@ -332,7 +412,7 @@ def export_global_search(
         "شناسه رکورد", "نوع معامله", "مجموعه", "دسته مزایده", "منبع",
         "شماره آگهی", "عنوان", "سازمان برگزارکننده", "استان", "شهر",
         "تاریخ اعلام", "مهلت پیشنهاد", "مبلغ پایه", "واحد پول",
-        "وضعیت", "مرتبط با کلیدواژه‌ها",
+        "وضعیت", "مرتبط با کلیدواژه‌ها", "نوع فراخوان", "مهلت دریافت اسناد",
     ]
 
     def export_rows():
@@ -361,19 +441,13 @@ def export_global_search(
                 row["money_unit"] or "",
                 excel_safe(row["state"]),
                 "بله" if row["has_keyword_match"] else "خیر",
+                excel_safe(row["type_name"]),
+                row["documents_deadline_at"].isoformat() if row["documents_deadline_at"] else "",
             ]
 
-    data = build_excel(
-        "تمام معاملات", "SetadScopeGlobal", headers, export_rows(),
-        widths=[18, 15, 34, 18, 36, 24, 54, 38, 20, 20, 25, 25, 24, 16, 20, 20],
+    return excel_download(
+        db, query, progress, "setadscope_global.xlsx",
+        "تمام معاملات", "SetadScopeGlobal", headers, export_rows,
+        widths=[18, 15, 34, 18, 36, 24, 54, 38, 20, 20, 25, 25, 24, 16, 20, 20, 26, 25],
         numeric_columns=(13,),
-    )
-
-    return StreamingResponse(
-        data,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": "attachment; filename=setadscope_global.xlsx",
-            "Content-Length": str(data.getbuffer().nbytes),
-        },
     )

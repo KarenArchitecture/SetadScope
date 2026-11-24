@@ -6,6 +6,16 @@ const api = axios.create({
   timeout: 15000,
 });
 
+export function listingQueryParams(options) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item !== "" && item !== undefined && item !== null) params.append(key, item);
+    }
+  }
+  return params;
+}
+
 function listingParams(options = {}) {
   const {
     search = "",
@@ -23,9 +33,7 @@ function listingParams(options = {}) {
     page,
     page_size: pageSize,
   };
-  return Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && value !== null),
-  );
+  return listingQueryParams(params);
 }
 
 export async function getAuctions(options = {}) {

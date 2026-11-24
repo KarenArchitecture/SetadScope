@@ -7,13 +7,11 @@ import threading
 from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal
-from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
-from fastapi.responses import StreamingResponse
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
 
@@ -29,9 +27,9 @@ from app.services.auction_ingestion import (
     resolve_collection_group,
 )
 from app.auction_category_jobs import latest_category_files
-from app.services.date_normalization import parse_filter_bound
-from app.services.excel_export import build_excel
+from app.excel_api import ExportProgress, excel_download, router as excel_router, track_excel_export
 from app.services.keyword_settings import SETTING_KEY, configured_keywords, validate_keywords
+from app.services.listing_filters import announced_today, date_range
 from app.services.tender_ingestion import RAW_DIR as TENDER_RAW_DIR, import_tender_pages
 from app.tender_jobs import latest_tender_run_files
 from app.tender_api import router as tenders_router
@@ -40,10 +38,12 @@ from app.search_api import router as global_search_router
 app = FastAPI(title="SetadScope API", version="0.5.0")
 app.include_router(global_search_router)
 app.include_router(tenders_router)
+app.include_router(excel_router)
 
 ORDER_FIELDS = {
     "source_party_id": Auction.source_party_id,
     "collection_group": Auction.collection_group,
+    "category": Auction.category,
     "item_title": Auction.item_title,
     "item_reference_no": Auction.item_reference_no,
     "asset_type": Auction.asset_type,
@@ -71,6 +71,8 @@ ORDER_FIELDS = {
     "first_seen_at": Auction.first_seen_at,
     "updated_at": Auction.updated_at,
 }
+
+AuctionCategory = Literal["movable", "immovable", "rental", "minor", "clearance"]
 
 PROGRESS_PREFIX = "PROGRESS_JSON:"
 collection_lock = threading.Lock()
@@ -572,15 +574,6 @@ def auction_to_dict(a: Auction) -> dict:
     }
 
 
-def _parse_bound(value: str | None, *, end_of_day: bool = False):
-    if not value:
-        return None
-    parsed = parse_filter_bound(value, end_of_day=end_of_day)
-    if parsed is None:
-        raise HTTPException(status_code=422, detail=f"Invalid date filter: {value}")
-    return parsed
-
-
 def filtered_query(
     status: str,
     search: str | None,
@@ -596,10 +589,10 @@ def filtered_query(
     category: str = "movable",
     matched_only: bool = True,
     collection_group: str = "all",
+    categories: list[AuctionCategory] | None = None,
+    today_only: bool = False,
 ):
-    query = select(Auction).where(Auction.category == category)
-    if collection_group != "all":
-        query = query.where(Auction.collection_group == collection_group)
+    query = select(Auction).where(*_auction_group_scope(category, collection_group, categories))
     if matched_only:
         query = query.where(Auction.has_keyword_match.is_(True))
     now = datetime.now(timezone.utc)
@@ -631,24 +624,14 @@ def filtered_query(
     if state:
         query = query.where(Auction.state == state)
 
-    announcement_start = _parse_bound(announcement_from)
-    announcement_end = _parse_bound(announcement_to, end_of_day=True)
-    deadline_start = _parse_bound(deadline_from)
-    deadline_end = _parse_bound(deadline_to, end_of_day=True)
-    if announcement_start and announcement_end and announcement_start > announcement_end:
-        raise HTTPException(status_code=422, detail="announcement_from cannot exceed announcement_to")
-    if deadline_start and deadline_end and deadline_start > deadline_end:
-        raise HTTPException(status_code=422, detail="deadline_from cannot exceed deadline_to")
+    query = query.where(
+        *date_range(announcement_date, "announcement", announcement_from, announcement_to),
+        *date_range(Auction.proposal_deadline, "deadline", deadline_from, deadline_to),
+    )
+    if today_only:
+        query = query.where(*announced_today(announcement_date))
     if price_min is not None and price_max is not None and price_min > price_max:
         raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
-    if announcement_start:
-        query = query.where(announcement_date >= announcement_start)
-    if announcement_end:
-        query = query.where(announcement_date <= announcement_end)
-    if deadline_start:
-        query = query.where(Auction.proposal_deadline >= deadline_start)
-    if deadline_end:
-        query = query.where(Auction.proposal_deadline <= deadline_end)
     if price_min is not None:
         query = query.where(Auction.base_total_price >= price_min)
     if price_max is not None:
@@ -656,19 +639,38 @@ def filtered_query(
     return query
 
 
-def _auction_group_scope(category: str, collection_group: str):
-    conditions = [Auction.category == category]
-    if collection_group != "all":
-        conditions.append(Auction.collection_group == collection_group)
-    return conditions
+def _auction_group_scope(
+    category: str, collection_group: str, categories: list[AuctionCategory] | None = None,
+):
+    if category == "all" or categories:
+        conditions = [Auction.category.in_(categories)] if categories else []
+        if collection_group in ("executive_agencies", "amval_tamliki"):
+            conditions.append(
+                or_(
+                    Auction.collection_group == collection_group,
+                    (Auction.collection_group == "shared") & (Auction.category == "clearance"),
+                )
+            )
+        elif collection_group != "all":
+            conditions.append(Auction.collection_group == collection_group)
+        return conditions
+
+    if collection_group == "all":
+        return [Auction.category == category]
+    try:
+        resolve_collection_group(category, collection_group)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return [Auction.category == category, Auction.collection_group == collection_group]
 
 
 def auction_archive_stats(
     db: Session,
     category: str,
     collection_group: str = "all",
+    categories: list[AuctionCategory] | None = None,
 ) -> dict[str, int]:
-    scope = _auction_group_scope(category, collection_group)
+    scope = _auction_group_scope(category, collection_group, categories)
     total = db.scalar(select(func.count(Auction.id)).where(*scope)) or 0
     matched_total = db.scalar(
         select(func.count(Auction.id)).where(*scope, Auction.has_keyword_match.is_(True))
@@ -699,8 +701,9 @@ def auction_filter_options(
     db: Session,
     category: str,
     collection_group: str = "all",
+    categories: list[AuctionCategory] | None = None,
 ) -> dict[str, list]:
-    scope = _auction_group_scope(category, collection_group)
+    scope = _auction_group_scope(category, collection_group, categories)
     provinces = db.scalars(
         select(Auction.province)
         .where(*scope, Auction.province.is_not(None))
@@ -1003,9 +1006,11 @@ def start_auction_collection(
 @app.get("/api/auctions")
 def get_auctions(
     search: str | None = None,
-    category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    category: AuctionCategory | Literal["all"] = "movable",
+    categories: list[AuctionCategory] | None = Query(None),
     collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     matched_only: bool = True,
+    today_only: bool = False,
     status: Literal["active", "archive", "all"] = "all",
     province: str | None = None,
     city: str | None = None,
@@ -1024,18 +1029,11 @@ def get_auctions(
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    if collection_group != "all":
-        try:
-            resolve_collection_group(category, collection_group)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
-    if price_min is not None and price_max is not None and price_min > price_max:
-        raise HTTPException(status_code=422, detail="price_min cannot exceed price_max")
 
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only, collection_group,
+        price_min, price_max, category, matched_only, collection_group, categories, today_only,
     )
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
@@ -1051,8 +1049,8 @@ def get_auctions(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
-        "archive_stats": auction_archive_stats(db, category, collection_group),
-        "filter_options": auction_filter_options(db, category, collection_group),
+        "archive_stats": auction_archive_stats(db, category, collection_group, categories),
+        "filter_options": auction_filter_options(db, category, collection_group, categories),
     }
 
 
@@ -1060,9 +1058,11 @@ def get_auctions(
 def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
-    category: Literal["movable", "immovable", "rental", "minor", "clearance"] = "movable",
+    category: AuctionCategory | Literal["all"] = "movable",
+    categories: list[AuctionCategory] | None = Query(None),
     collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     matched_only: bool = True,
+    today_only: bool = False,
     province: str | None = None,
     city: str | None = None,
     state: str | None = None,
@@ -1074,19 +1074,15 @@ def export_auctions(
     price_max: Decimal | None = Query(None, ge=0),
     sort_by: str = Query("proposal_deadline"),
     sort_dir: Literal["asc", "desc"] = "asc",
+    progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    if collection_group != "all":
-        try:
-            resolve_collection_group(category, collection_group)
-        except ValueError as exc:
-            raise HTTPException(status_code=422, detail=str(exc)) from exc
     query = filtered_query(
         status, search, province, city, state,
         announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only, collection_group,
+        price_min, price_max, category, matched_only, collection_group, categories, today_only,
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
@@ -1097,33 +1093,27 @@ def export_auctions(
         "مبلغ پایه (واحد تأییدنشده)", "مبلغ سپرده (واحد تأییدنشده)",
         "تاریخ اعلام برنده", "تاریخ بازگشایی", "شماره آگهی", "لینک منبع",
     ]
-    rows = (
-        [
-            excel_safe(a.source_party_id), a.collection_group, a.category,
-            excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
-            excel_safe(a.description), excel_safe(", ".join(a.matched_keywords or [])),
-            excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
-            str(a.site_show_start_at or a.publish_start_at or ""),
-            str(a.proposal_start or ""), str(a.proposal_deadline or ""),
-            str(a.document_deadline or ""),
-            a.base_total_price, a.trust_amount,
-            str(a.winner_announce_at or ""), str(a.opening_at or ""),
-            excel_safe(a.auction_no), excel_safe(a.source_url),
-        ]
-        for a in db.scalars(query).yield_per(500)
-    )
-    data = build_excel(
-        "مزایده‌ها", "SetadScopeAuctions", headers, rows,
+
+    def export_rows():
+        for a in db.scalars(query).yield_per(500):
+            yield [
+                excel_safe(a.source_party_id), a.collection_group, a.category,
+                excel_safe(a.title), excel_safe(a.item_title), excel_safe(a.price_type),
+                excel_safe(a.description), excel_safe(", ".join(a.matched_keywords or [])),
+                excel_safe(a.organization), excel_safe(a.province), excel_safe(a.city),
+                str(a.site_show_start_at or a.publish_start_at or ""),
+                str(a.proposal_start or ""), str(a.proposal_deadline or ""),
+                str(a.document_deadline or ""),
+                a.base_total_price, a.trust_amount,
+                str(a.winner_announce_at or ""), str(a.opening_at or ""),
+                excel_safe(a.auction_no), excel_safe(a.source_url),
+            ]
+
+    return excel_download(
+        db, query, progress, "setadscope_auctions.xlsx",
+        "مزایده‌ها", "SetadScopeAuctions", headers, export_rows,
         widths=[23, 22, 17, 52, 44, 22, 65, 32, 38, 20, 20, 25, 25, 25, 25, 27, 27, 25, 25, 22, 52],
         numeric_columns=(16, 17),
-    )
-    return StreamingResponse(
-        data,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": "attachment; filename=setadscope_auctions.xlsx",
-            "Content-Length": str(data.getbuffer().nbytes),
-        },
     )
 
 

@@ -83,3 +83,9 @@
     width: 70%;
   }
 }
+
+.excel-export__rows {
+  color: var(--text-muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
