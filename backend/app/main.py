@@ -8,7 +8,7 @@ from collections import deque
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
@@ -116,22 +116,26 @@ GLOBAL_COLLECTION_SOURCES = tuple(
 AuctionBatchGroup = Literal["all", "executive_agencies", "amval_tamliki"]
 
 
-def auction_batch_key(group: AuctionBatchGroup) -> str:
-    return f"auction-batch:{group}"
+def auction_batch_key(
+    group: AuctionBatchGroup, categories: list[AuctionCategory] | None = None,
+) -> str:
+    selected = tuple(category for category in AUCTION_CATEGORY_LABELS if category in (categories or ()))
+    suffix = ",".join(selected) if 0 < len(selected) < len(AUCTION_CATEGORY_LABELS) else "all"
+    return f"auction-batch:{group}:{suffix}"
 
 
-def auction_batch_sources(group: AuctionBatchGroup) -> tuple[dict, ...]:
+def auction_batch_sources(
+    group: AuctionBatchGroup, categories: list[AuctionCategory] | None = None,
+) -> tuple[dict, ...]:
     # Preserve category order, including when both owning collections are selected.
     return tuple(
         source
         for category in AUCTION_CATEGORY_LABELS
+        if not categories or category in categories
         for source in GLOBAL_COLLECTION_SOURCES
         if source["category"] == category
         and (group == "all" or source["collection_group"] in (group, "shared"))
     )
-
-
-AUCTION_BATCH_GROUPS: tuple[AuctionBatchGroup, ...] = ("all", "executive_agencies", "amval_tamliki")
 
 
 def collection_state_key(collection_group: str, category: str) -> str:
@@ -213,23 +217,16 @@ for _group, _categories in AUCTION_CATEGORIES_BY_GROUP.items():
         collection_states[_key] = initial_collection_state("auctions", _group, _category)
 
 
-def initial_auction_batch_state(group: AuctionBatchGroup) -> dict:
+def initial_auction_batch_state(group: AuctionBatchGroup, total_sources: int) -> dict:
     return {
-        **initial_global_collection_state(kind="auction_batch", total_sources=len(auction_batch_sources(group))),
+        **initial_global_collection_state(kind="auction_batch", total_sources=total_sources),
         "collection_group": group,
     }
 
 
-for _group in AUCTION_BATCH_GROUPS:
-    collection_states[auction_batch_key(_group)] = initial_auction_batch_state(_group)
-
-
 def active_batch_key() -> str | None:
     # Call under collection_lock when reading or reserving a batch.
-    for key in ("global", *(auction_batch_key(group) for group in AUCTION_BATCH_GROUPS)):
-        if collection_states[key]["status"] == "running":
-            return key
-    return None
+    return next((key for key, state in collection_states.items() if state["status"] == "running"), None)
 
 
 def update_collection_state(state_key: str, **values) -> dict:
@@ -919,10 +916,13 @@ def start_collection(
 def get_auction_batch_status(
     collection_group: AuctionBatchGroup = "all",
     db: Session = Depends(get_db),
+    categories: Annotated[list[AuctionCategory] | None, Query()] = None,
 ):
+    sources = auction_batch_sources(collection_group, categories)
+    batch_key = auction_batch_key(collection_group, categories)
     with collection_lock:
-        state = dict(collection_states[auction_batch_key(collection_group)])
-    sources = auction_batch_sources(collection_group)
+        stored_state = collection_states.get(batch_key)
+        state = dict(stored_state) if stored_state else initial_auction_batch_state(collection_group, len(sources))
     last_updated = db.scalar(
         select(func.max(IngestionRun.finished_at)).where(
             IngestionRun.kind == "auctions",
@@ -942,10 +942,12 @@ def get_auction_batch_status(
 def start_auction_batch(
     background_tasks: BackgroundTasks,
     collection_group: AuctionBatchGroup = "all",
+    categories: Annotated[list[AuctionCategory] | None, Query()] = None,
 ):
-    batch_key = auction_batch_key(collection_group)
-    response = reserve_collection_batch(batch_key, initial_auction_batch_state(collection_group))
-    background_tasks.add_task(run_collection_batch, batch_key, auction_batch_sources(collection_group))
+    sources = auction_batch_sources(collection_group, categories)
+    batch_key = auction_batch_key(collection_group, categories)
+    response = reserve_collection_batch(batch_key, initial_auction_batch_state(collection_group, len(sources)))
+    background_tasks.add_task(run_collection_batch, batch_key, sources)
     return response
 
 

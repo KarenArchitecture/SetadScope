@@ -184,9 +184,9 @@ function CollectionProgress({ state, kind, onDismiss }) {
     completed_with_errors: "جمع‌آوری با خطا پایان یافت",
     failed: "اجرای ناموفق",
     importing: "در حال ذخیره در پایگاه داده",
-    running: "در حال جمع‌آوری همه مزایده‌ها",
+    running: "در حال جمع‌آوری مزایده‌ها",
   }[state.status] || "در حال دریافت از سامانه ستاد";
-  const panelLabel = isBatch ? "جمع‌آوری همه مزایده‌ها" : kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
+  const panelLabel = kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
 
   return (
     <section className={"collection-progress " + (state.status === "failed" ? "collection-progress--failed" : "")}>
@@ -235,6 +235,12 @@ function CollectionProgress({ state, kind, onDismiss }) {
           <>
             <span><strong>{formatNumber(state.completed_sources)}</strong> از {formatNumber(state.total_sources)} منبع اجرا شده</span>
             <span><strong>{formatNumber(state.successful_sources)}</strong> منبع موفق</span>
+            {active && state.current_source_key && (
+              <>
+                <span><strong>{formatNumber(state.current_pages_completed)}</strong> / {formatNumber(state.current_total_pages)} صفحه</span>
+                <span><strong>{formatNumber(state.current_records_fetched)}</strong> رکورد دریافت‌شده</span>
+              </>
+            )}
           </>
         ) : (
           <>
@@ -317,17 +323,15 @@ function AuctionScopeFilters({ collectionGroup, categories, onGroupChange, onCat
           <p id="auction-scope-category-hint">چند نوع را هم‌زمان انتخاب کنید یا «همه» را بزنید.</p>
         </div>
         <div className="auction-scope__options" role="group" aria-labelledby="auction-scope-category" aria-describedby="auction-scope-category-hint">
-          {[{ key: "all", label: "همه" }, ...AUCTION_CATEGORIES].map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              aria-pressed={key === "all" ? allTypes : categories.includes(key)}
-              onClick={() => onCategoryChange(key)}
-            >
-              <Check size={13} aria-hidden="true" />
-              {label}
-            </button>
-          ))}
+          {[{ key: "all", label: "همه" }, ...AUCTION_CATEGORIES].map(({ key, label }) => {
+            const selected = key === "all" ? allTypes : categories.includes(key);
+            return (
+              <button key={key} type="button" aria-pressed={selected} onClick={() => onCategoryChange(key)}>
+                {selected && <Check size={13} aria-hidden="true" />}
+                {label}
+              </button>
+            );
+          })}
         </div>
       </div>
       <footer className="auction-scope__footer">
@@ -466,10 +470,13 @@ export default function Dashboard({ kind }) {
   );
   const isSharedClearance = !isTender && auctionCategory === "clearance";
   const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
-  const collectAllAuctions = !isTender && selectedCategories.length === 0;
-  const collectionCategory = collectAllAuctions ? "all" : auctionCategory;
-  const collectionLabel = isTender ? "مناقصه‌ها" : collectAllAuctions ? "همه مزایده‌ها" : selectedCategoryLabel;
-  const canCollect = isTender || collectAllAuctions || Boolean(auctionCategory && effectiveCollectionGroup !== "all");
+  const isAuctionBatch = !isTender && (!auctionCategory || effectiveCollectionGroup === "all");
+  const collectionCategory = isAuctionBatch ? "all" : auctionCategory;
+  const batchCategories = isAuctionBatch ? selectedCategories : undefined;
+  const collectionLabel = isTender ? "مناقصه‌ها" : "مزایده‌ها";
+  const collectionTarget = useMemo(() => (
+    [kind, collectionCategory, effectiveCollectionGroup, batchCategories]
+  ), [kind, collectionCategory, effectiveCollectionGroup, batchCategories]);
   const auctionScope = useMemo(() => ({
     category: "all",
     categories: selectedCategories,
@@ -495,6 +502,7 @@ export default function Dashboard({ kind }) {
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
+  const [trackedCollection, setTrackedCollection] = useState(null);
   const [collectionProgressDismissed, setCollectionProgressDismissed] = useState(false);
   const dismissedCollectionRuns = useRef(new Set());
   const lastRefreshedRun = useRef(null);
@@ -502,7 +510,6 @@ export default function Dashboard({ kind }) {
   const lastRequestId = useRef(0);
   const startRequestVersion = useRef(0);
   const [collectionStarting, setCollectionStarting] = useState(false);
-  const collectionScopeVersion = useRef(0);
 
   const loadPage = useCallback(async (nextPage = 1) => {
     const requestId = ++lastRequestId.current;
@@ -538,24 +545,26 @@ export default function Dashboard({ kind }) {
   }, [loadPage]);
 
   useEffect(() => {
-    if (!canCollect) return undefined;
+    if (trackedCollection) return undefined;
     let active = true;
     const requestVersion = startRequestVersion.current;
-    getCollectionStatus(kind, collectionCategory, effectiveCollectionGroup).then((status) => {
-      if (active && requestVersion === startRequestVersion.current) setCollectionState(status);
+    getCollectionStatus(...collectionTarget).then((status) => {
+      if (!active || requestVersion !== startRequestVersion.current) return;
+      setCollectionState(status);
+      if (ACTIVE_STATES.has(status.status)) setTrackedCollection(collectionTarget);
     }).catch(() => {});
     return () => { active = false; };
-  }, [canCollect, kind, collectionCategory, effectiveCollectionGroup]);
+  }, [collectionTarget, trackedCollection]);
 
   useEffect(() => {
-    if (!canCollect || !ACTIVE_STATES.has(collectionState.status)) return undefined;
+    if (!trackedCollection || !ACTIVE_STATES.has(collectionState.status)) return undefined;
     let cancelled = false;
     let requestInFlight = false;
     const timer = window.setInterval(async () => {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind, collectionCategory, effectiveCollectionGroup);
+        const nextState = await getCollectionStatus(...trackedCollection);
         if (cancelled) return;
         setCollectionState(nextState);
         const completedRunKey = nextState.finished_at || nextState.started_at;
@@ -563,7 +572,7 @@ export default function Dashboard({ kind }) {
         if (finished && completedRunKey && lastNotifiedCollectionRun.current !== completedRunKey) {
           lastNotifiedCollectionRun.current = completedRunKey;
           const stored = formatNumber(nextState.records_stored || nextState.totals?.stored || 0);
-          const message = collectAllAuctions
+          const message = nextState.kind === "auction_batch"
             ? nextState.message
             : nextState.status === "completed"
               ? "جمع‌آوری " + collectionLabel + " با موفقیت انجام شد. " + stored + " رکورد ذخیره شد."
@@ -584,7 +593,7 @@ export default function Dashboard({ kind }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [canCollect, collectAllAuctions, collectionState.status, kind, collectionCategory, effectiveCollectionGroup, loadPage, collectionLabel]);
+  }, [collectionState.status, trackedCollection, loadPage, collectionLabel]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -742,7 +751,8 @@ export default function Dashboard({ kind }) {
   }, [isTender, auctionCategory, collectionGroup, isSharedClearance]);
 
   function clearCollectionState() {
-    collectionScopeVersion.current += 1;
+    if (collectionStarting || collectionRunning) return;
+    setTrackedCollection(null);
     setCollectionState({ status: "idle" });
     setCollectionProgressDismissed(false);
     lastRefreshedRun.current = null;
@@ -793,8 +803,8 @@ export default function Dashboard({ kind }) {
   }
 
   async function handleCollection() {
-    const scopeVersion = collectionScopeVersion.current;
     startRequestVersion.current += 1;
+    setTrackedCollection(collectionTarget);
     setCollectionStarting(true);
     setError("");
     setCollectionProgressDismissed(false);
@@ -804,13 +814,11 @@ export default function Dashboard({ kind }) {
       { duration: 0 },
     );
     try {
-      const nextState = await startCollection(kind, collectionCategory, effectiveCollectionGroup);
-      if (scopeVersion === collectionScopeVersion.current) {
-        setCollectionState((current) => ({
-          ...nextState,
-          last_updated_at: nextState.last_updated_at ?? current.last_updated_at,
-        }));
-      }
+      const nextState = await startCollection(...collectionTarget);
+      setCollectionState((current) => ({
+        ...nextState,
+        last_updated_at: nextState.last_updated_at ?? current.last_updated_at,
+      }));
       notifyToast(
         "info",
         "درخواست جمع‌آوری " + collectionLabel + " ثبت شد؛ نتیجه پس از پایان اجرا اعلام می‌شود.",
@@ -819,7 +827,8 @@ export default function Dashboard({ kind }) {
     } catch (requestError) {
       const message = requestError.response?.data?.detail ||
         ("شروع جمع‌آوری " + collectionLabel + " ناموفق بود.");
-      if (scopeVersion === collectionScopeVersion.current) setError(message);
+      setTrackedCollection(null);
+      setError(message);
       notifyToast("error", message, { id: toastId, duration: 6500 });
     } finally {
       setCollectionStarting(false);
@@ -868,18 +877,18 @@ export default function Dashboard({ kind }) {
               </div>
               {isTender && <p>فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد</p>}
             </div>
-            {canCollect && <div className="page-heading__actions">
+            <div className="page-heading__actions">
               <section className="collection-action-card" aria-label="عملیات داده">
                 <button
                   className="button button--primary collection-action-card__collect"
                   onClick={handleCollection}
                   disabled={collectionRunning || collectionStarting}
-                  aria-label={"جمع‌آوری " + collectionLabel}
+                  aria-label={isTender ? "جمع‌آوری مناقصه‌ها" : "جمع‌آوری داده"}
                 >
                   {collectionRunning || collectionStarting ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
                   <span>{collectionRunning || collectionStarting
                     ? "در حال اجرا..."
-                    : "جمع‌آوری " + collectionLabel}</span>
+                    : isTender ? "جمع‌آوری مناقصه‌ها" : "جمع‌آوری داده"}</span>
                 </button>
                 <span
                   className="collection-action-card__last-updated"
@@ -888,7 +897,7 @@ export default function Dashboard({ kind }) {
                   {formatLastCollectionUpdate(collectionState.last_updated_at)}
                 </span>
               </section>
-            </div>}
+            </div>
           </section>
 
           {!isTender && (
@@ -899,7 +908,7 @@ export default function Dashboard({ kind }) {
               onCategoryChange={handleCategoryChange}
             />
           )}
-          {canCollect && !isCollectionProgressDismissed && (
+          {!isCollectionProgressDismissed && (
             <CollectionProgress
               state={collectionState}
               kind={kind}

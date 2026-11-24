@@ -70,6 +70,7 @@ export async function startCollection(
   kind,
   category = "movable",
   collectionGroup = "executive_agencies",
+  categories = [],
 ) {
   if (kind === "tenders") {
     const response = await api.post("/api/collection/tenders/run");
@@ -78,7 +79,7 @@ export async function startCollection(
   const response = await api.post(
     "/api/collection/auctions/" + category + "/run",
     null,
-    { params: { collection_group: collectionGroup } },
+    { params: listingQueryParams({ collection_group: collectionGroup, categories }) },
   );
   return response.data;
 }
@@ -87,6 +88,7 @@ export async function getCollectionStatus(
   kind,
   category = "movable",
   collectionGroup = "executive_agencies",
+  categories = [],
 ) {
   if (kind === "tenders") {
     const response = await api.get("/api/collection/tenders/status");
@@ -94,7 +96,7 @@ export async function getCollectionStatus(
   }
   const response = await api.get(
     "/api/collection/auctions/" + category + "/status",
-    { params: { collection_group: collectionGroup } },
+    { params: listingQueryParams({ collection_group: collectionGroup, categories }) },
   );
   return response.data;
 }

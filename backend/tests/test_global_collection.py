@@ -25,7 +25,9 @@ def test_global_collection_runs_all_sources_sequentially_and_continues_after_fai
                 if key == "global":
                     main.collection_states[key] = main.initial_global_collection_state()
                 elif state["kind"] == "auction_batch":
-                    main.collection_states[key] = main.initial_auction_batch_state(state["collection_group"])
+                    main.collection_states[key] = main.initial_auction_batch_state(
+                        state["collection_group"], state["total_sources"],
+                    )
                 elif key == "tenders":
                     main.collection_states[key] = main.initial_collection_state("tenders")
                 else:
@@ -136,14 +138,20 @@ def test_global_collection_start_registers_background_job_and_reports_source_cou
 
 
 @pytest.mark.parametrize(
-    "group,expected_groups",
+    "group,expected_groups,categories,expected_categories",
     [
-        ("executive_agencies", ("executive_agencies",)),
-        ("amval_tamliki", ("amval_tamliki",)),
-        ("all", ("executive_agencies", "amval_tamliki")),
+        ("executive_agencies", ("executive_agencies",), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("amval_tamliki", ("amval_tamliki",), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("executive_agencies", ("executive_agencies",), ["immovable", "movable"], ("movable", "immovable")),
+        ("amval_tamliki", ("amval_tamliki",), ["clearance", "immovable"], ("immovable", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), ["clearance", "immovable", "immovable"], ("immovable", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), ["immovable"], ("immovable",)),
     ],
 )
-def test_all_auctions_routes_run_categories_in_order_and_report_failures(monkeypatch, group, expected_groups):
+def test_auction_batch_runs_selected_categories_in_order_and_reports_failures(
+    monkeypatch, group, expected_groups, categories, expected_categories,
+):
     from fastapi.testclient import TestClient
 
     class EmptyHistory:
@@ -154,15 +162,16 @@ def test_all_auctions_routes_run_categories_in_order_and_report_failures(monkeyp
     monkeypatch.setitem(main.app.dependency_overrides, main.get_db, EmptyHistory)
     calls = []
     failure = (expected_groups[0], "immovable")
+    batch_key = main.auction_batch_key(group, categories)
 
     def run_one(kind, collection_group, category):
         assert kind == "auctions"
         index = len(calls)
-        assert main.collection_states[main.auction_batch_key(group)]["completed_sources"] == index
+        assert main.collection_states[batch_key]["completed_sources"] == index
         calls.append((collection_group, category))
         key = main.collection_state_key(collection_group, category)
         main.update_collection_state(key, status="collecting", progress_percent=50)
-        batch = main.collection_states[main.auction_batch_key(group)]
+        batch = main.collection_states[batch_key]
         assert batch["current_progress_percent"] == 50
         assert batch["current_source_key"] == key
         if (collection_group, category) == failure:
@@ -172,7 +181,7 @@ def test_all_auctions_routes_run_categories_in_order_and_report_failures(monkeyp
     monkeypatch.setattr(main, "run_collection_job", run_one)
     try:
         with TestClient(main.app) as client:
-            params = {"collection_group": group}
+            params = {"collection_group": group, "categories": categories}
             initial = client.get("/api/collection/auctions/all/status", params=params)
             assert initial.status_code == 200
             assert initial.json()["status"] == "idle"
@@ -180,16 +189,25 @@ def test_all_auctions_routes_run_categories_in_order_and_report_failures(monkeyp
             assert started.status_code == 202, started.text
             expected = [
                 (owner, category)
-                for category in ("movable", "immovable", "rental", "minor")
+                for category in expected_categories
+                if category != "clearance"
                 for owner in expected_groups
-            ] + [("shared", "clearance")]
+            ]
+            if "clearance" in expected_categories:
+                expected.append(("shared", "clearance"))
             assert calls == expected
             assert started.json()["total_sources"] == len(expected)
-            status = client.get("/api/collection/auctions/all/status", params=params).json()
+            status = client.get("/api/collection/auctions/all/status", params={
+                "collection_group": group,
+                "categories": sorted(set(categories)),
+            }).json()
             assert status["status"] == "completed_with_errors"
             assert status["overall_progress_percent"] == 100
             assert status["successful_sources"] == len(expected) - 1
             assert status["failed_sources"][0]["error"] == "immovable failed"
+            if categories:
+                unfiltered = client.get("/api/collection/auctions/all/status", params={"collection_group": group})
+                assert unfiltered.json()["status"] == "idle"
     finally:
         _restore_states(previous_states)
 

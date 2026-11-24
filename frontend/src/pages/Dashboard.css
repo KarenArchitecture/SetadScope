@@ -1439,6 +1439,7 @@
 
 /* Collection and category filters share a single scope. */
 .auction-scope {
+  container-type: inline-size;
   margin-block-end: 16px;
   padding: 0 18px;
   color: var(--text-primary);
@@ -1464,7 +1465,7 @@
 
 .auction-scope__row {
   display: grid;
-  grid-template-columns: minmax(165px, 225px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr) minmax(0, 1fr);
   align-items: center;
   gap: 12px;
   padding-block: 13px;
@@ -1529,10 +1530,6 @@
   outline-offset: 2px;
 }
 
-.auction-scope__options button[aria-pressed="false"] svg {
-  visibility: hidden;
-}
-
 .auction-scope__footer {
   display: flex;
   justify-content: space-between;
@@ -1565,14 +1562,12 @@
   .auction-scope {
     padding-inline: 12px;
   }
+}
 
+@container (max-width: 850px) {
   .auction-scope__row {
     grid-template-columns: 1fr;
     gap: 8px;
-  }
-
-  .auction-scope__options {
-    justify-content: flex-start;
   }
 }
 
