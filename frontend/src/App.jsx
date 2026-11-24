@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { defaultListing, listingTypes } from "./listingTypes";
+import QuickActions from "./pages/QuickActions";
 import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
 import GlobalSearchPage from "./pages/GlobalSearchPage";
@@ -10,6 +11,7 @@ import { getApiHealth } from "./services/api";
 
 function resolvePage() {
   if (window.location.pathname.startsWith("/search")) return "search";
+  if (window.location.pathname === "/quick") return "quick";
   if (window.location.pathname.startsWith("/settings")) return "settings";
   return listingTypes.find(({ path }) => window.location.pathname.startsWith(path))?.page ?? defaultListing.page;
 }
@@ -156,7 +158,7 @@ export default function App() {
             onNavigate={navigate}
             initialQuery={initialQuery}
           />
-          {page === "settings"
+          {page === "quick" ? <QuickActions /> : page === "settings"
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
               ? <GlobalSearchPage key={routeVersion} query={initialQuery} onQueryChange={updateTableQuery} />

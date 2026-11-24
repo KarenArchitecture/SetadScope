@@ -9,6 +9,8 @@ function formatNumber(value) {
 
 export default function ExcelExportButton({
   href,
+  autoStart = false,
+  onAutoStart,
   filename = "setadscope_export.xlsx",
   label = "خروجی Excel",
 }) {
@@ -21,6 +23,15 @@ export default function ExcelExportButton({
     requestRef.current?.abort();
     window.clearTimeout(completedTimer.current);
   }, []);
+
+  useEffect(() => {
+    if (!autoStart) return;
+    const timer = window.setTimeout(() => {
+      onAutoStart?.();
+      handleExport();
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [autoStart, href]);
 
   function handleExport() {
     if (requestRef.current || !href) return;

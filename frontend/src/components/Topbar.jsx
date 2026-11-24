@@ -7,6 +7,7 @@ import { listingTypes } from "../listingTypes";
 const PAGE_TITLES = {
   ...Object.fromEntries(listingTypes.map(({ page, title }) => [page, title])),
   search: "همه آگهی‌ها",
+  quick: "دسترسی سریع",
   settings: "تنظیمات سایت",
 };
 
