@@ -1,7 +1,7 @@
 import { Activity, ChevronsLeft, ChevronsRight, Database, FileText, Gavel, Search, Settings2 } from "lucide-react";
 
 const LINKS = [
-  { page: "search", path: "/search", title: "جست‌وجوی سراسری", icon: Search },
+  { page: "search", path: "/search", title: "همه آگهی‌ها", icon: Search },
   { page: "auctions", path: "/auctions", title: "مزایده‌ها", icon: Gavel },
   { page: "tenders", path: "/tenders", title: "مناقصه‌ها", icon: FileText },
   { page: "settings", path: "/settings", title: "تنظیمات سایت", icon: Settings2 },

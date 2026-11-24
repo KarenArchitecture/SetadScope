@@ -956,7 +956,7 @@ export default function Dashboard({ kind }) {
 
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
-            title={isTender ? "فهرست مناقصه‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
+            title={isTender ? "فهرست مناقصه‌ها" : !selectedCategories.length ? "فهرست همه مزایده‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
             tag="داده قابل فیلتر"
             columns={columns}
             items={result.items}

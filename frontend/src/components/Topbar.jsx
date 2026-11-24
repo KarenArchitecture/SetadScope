@@ -5,7 +5,7 @@ import ThemeToggle from "./ThemeToggle";
 const PAGE_TITLES = {
   auctions: "مزایده‌ها",
   tenders: "مناقصه‌ها",
-  search: "جست‌وجوی سراسری",
+  search: "همه آگهی‌ها",
   settings: "تنظیمات سایت",
 };
 

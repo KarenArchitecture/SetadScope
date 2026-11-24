@@ -58,9 +58,8 @@ function TypeBadge({ kind }) {
   );
 }
 
-export default function GlobalSearchPage() {
-  const initialQuery = new URLSearchParams(window.location.search).get("q") || "";
-  const [query] = useState(initialQuery);
+export default function GlobalSearchPage({ query, onQueryChange }) {
+  const [searchInput, setSearchInput] = useState(query);
   const [kind, setKind] = useState("all");
   const [sortBy, setSortBy] = useState("announcement_at");
   const [sortDir, setSortDir] = useState("desc");
@@ -227,6 +226,19 @@ export default function GlobalSearchPage() {
     }
   }
 
+  function submitSearch(event) {
+    event.preventDefault();
+    const term = searchInput.trim();
+    setSearchInput(term);
+    if (term === query) loadPage(1);
+    else onQueryChange(term);
+  }
+
+  function changeSearchInput(value) {
+    setSearchInput(value);
+    if (!value && query) onQueryChange("");
+  }
+
   function changeKind(nextKind) {
     if (kind === nextKind) return;
     setKind(nextKind);
@@ -269,8 +281,7 @@ export default function GlobalSearchPage() {
       <div className="dashboard-content global-search-content" id="global-search">
           <section className="page-heading global-search-heading">
             <div>
-              <span className="eyebrow">جست‌وجو در تمام منابع داده</span>
-              <h1>جست‌وجوی سراسری معاملات</h1>
+              <h1>همه آگهی‌ها</h1>
               <p>
                 {query
                   ? <>نتایج جست‌وجو برای <strong>«{query}»</strong> در مزایده‌ها و مناقصه‌ها</>
@@ -329,7 +340,10 @@ export default function GlobalSearchPage() {
                 {...filterPanel}
               />
             }
-            hideSearch
+            searchInput={searchInput}
+            onSearchInput={changeSearchInput}
+            onSearch={submitSearch}
+            searchPlaceholder="جست‌وجو در عنوان، شرح، شماره یا سازمان آگهی..."
           />
 
           <footer className="dashboard-footer">

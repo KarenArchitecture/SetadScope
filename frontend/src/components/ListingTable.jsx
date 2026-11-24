@@ -30,7 +30,6 @@ export default function ListingTable({
   onSort,
   advancedSearch,
   headerActions,
-  hideSearch = false,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, total);
@@ -48,31 +47,28 @@ export default function ListingTable({
         </div>
       </div>
 
-      {!hideSearch && (
-        <form className="search-bar" onSubmit={onSearch}>
-          <Search size={18} />
-          <input
-            value={searchInput}
-            onChange={(event) => onSearchInput(event.target.value)}
-            placeholder={searchPlaceholder}
-            aria-label="جست‌وجو در آگهی‌ها"
-          />
-          {searchInput && (
-            <button
-              type="button"
-              className="search-clear"
-              onClick={() => onSearchInput("")}
-              aria-label="پاک کردن"
-            >
-              <X size={16} />
-            </button>
-          )}
-          <button className="button button--primary" type="submit" disabled={loading}>
-            جست‌وجو
+      <form className="search-bar" onSubmit={onSearch}>
+        <Search size={18} />
+        <input
+          value={searchInput}
+          onChange={(event) => onSearchInput(event.target.value)}
+          placeholder={searchPlaceholder}
+          aria-label="جست‌وجو در آگهی‌ها"
+        />
+        {searchInput && (
+          <button
+            type="button"
+            className="search-clear"
+            onClick={() => onSearchInput("")}
+            aria-label="پاک کردن"
+          >
+            <X size={16} />
           </button>
-        </form>
-  
         )}
+        <button className="button button--primary" type="submit" disabled={loading}>
+          جست‌وجو
+        </button>
+      </form>
 
       {advancedSearch}
 

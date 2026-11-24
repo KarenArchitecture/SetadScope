@@ -116,7 +116,7 @@ assert.match(globalSearchPage, /getAuctionById/);
 assert.match(globalSearchPage, /getTenderById/);
 assert.match(listing, /key=\{item\.row_key \|\| item\.id\}/);
 assert.match(listing, /onDetails\(item\.id, item\)/);
-assert.match(globalSearchPage, /hideSearch/);
+assert.match(globalSearchPage, /onSearch=\{submitSearch\}/);
 assert.match(globalSearchPage, /advancedSearch=\{\s*<FiltersPanel/);
 
 console.log("Global search checks passed: all transaction types, navigation and details.");

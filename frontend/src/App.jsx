@@ -35,6 +35,7 @@ function revealGeometry(event) {
 
 export default function App() {
   const [page, setPage] = useState(resolvePage);
+  const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [routeVersion, setRouteVersion] = useState(0);
   const [theme, setTheme] = useState(initialTheme);
   const [themeTransition, setThemeTransition] = useState(null);
@@ -83,6 +84,7 @@ export default function App() {
       window.history.replaceState({}, "", "/auctions");
     }
     const handlePopState = () => {
+      setLocationSearch(window.location.search);
       setPage(resolvePage());
       setRouteVersion((current) => current + 1);
     };
@@ -92,8 +94,17 @@ export default function App() {
 
   function navigate(path) {
     if (window.location.pathname + window.location.search !== path) window.history.pushState({}, "", path);
+    setLocationSearch(window.location.search);
     setPage(resolvePage());
     setRouteVersion((current) => current + 1);
+  }
+
+  function updateTableQuery(query) {
+    const url = new URL(window.location.href);
+    if (query) url.searchParams.set("q", query);
+    else url.searchParams.delete("q");
+    window.history.replaceState(window.history.state, "", url);
+    setLocationSearch(url.search);
   }
 
   function onThemeToggle(event) {
@@ -123,7 +134,7 @@ export default function App() {
 
   const onSidebarToggle = () => setSidebarCollapsed((current) => !current);
   const initialQuery = page === "search"
-    ? new URLSearchParams(window.location.search).get("q") || ""
+    ? new URLSearchParams(locationSearch).get("q") || ""
     : "";
 
   return (
@@ -147,7 +158,7 @@ export default function App() {
           {page === "settings"
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
-              ? <GlobalSearchPage key={routeVersion} />
+              ? <GlobalSearchPage key={routeVersion} query={initialQuery} onQueryChange={updateTableQuery} />
               : <Dashboard key={page} kind={page} />}
         </main>
       </div>
