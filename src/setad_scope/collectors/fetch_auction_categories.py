@@ -152,8 +152,57 @@ def validate_source_context(rows: list[dict], source) -> None:
         )
 
 
+def _centralboard_response_diagnostic(response, page: int) -> dict[str, Any]:
+    """Capture safe, useful diagnostics for a Central Board HTTP failure."""
+    allowed_headers = {
+        "content-type", "content-length", "date", "server", "retry-after",
+        "via", "x-request-id", "x-correlation-id", "cf-ray", "x-cache",
+        "x-envoy-upstream-service-time", "request-id", "traceparent",
+    }
+    response_headers = getattr(response, "headers", {}) or {}
+    selected_headers = {
+        str(name): str(value)
+        for name, value in response_headers.items()
+        if str(name).lower() in allowed_headers
+        or str(name).lower().startswith(("x-ratelimit-", "x-rate-limit-"))
+    }
+    try:
+        body = response.text or ""
+    except Exception:
+        body = "<response body unavailable>"
+    request = getattr(response, "request", None)
+    request_headers = getattr(request, "headers", {}) or {}
+    elapsed = getattr(response, "elapsed", None)
+    try:
+        elapsed_ms = int(elapsed.total_seconds() * 1000) if elapsed is not None else None
+    except (AttributeError, TypeError, ValueError):
+        elapsed_ms = None
+    return {
+        "status_code": getattr(response, "status_code", None),
+        "page_number": page,
+        "page_number_base": 0,
+        "url": getattr(response, "url", None),
+        "elapsed_ms": elapsed_ms,
+        "response_headers": selected_headers,
+        # Header names only: never persist Cookie or Authorization values.
+        "request_header_names": sorted(str(name) for name in request_headers.keys()),
+        "body_preview": body[:2000],
+    }
+
+
 class ClearancePreconditionError(RuntimeError):
-    pass
+    def __init__(self, source_key: str, page: int, response):
+        self.diagnostic = _centralboard_response_diagnostic(response, page)
+        headers = self.diagnostic["response_headers"]
+        header_summary = ", ".join(f"{key}={value}" for key, value in headers.items())
+        body_summary = " ".join(self.diagnostic["body_preview"].split())[:500]
+        super().__init__(
+            f"{source_key}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر); "
+            f"elapsed_ms={self.diagnostic['elapsed_ms']}; "
+            f"headers=[{header_summary or 'none'}]; "
+            f"request_headers={','.join(self.diagnostic['request_header_names']) or 'unknown'}; "
+            f"body={body_summary!r}"
+        )
 
 
 def fetch_page(
@@ -171,7 +220,7 @@ def fetch_page(
             response = session.get(url, params=params, timeout=(20, 90))
             if source.adapter == "centralboard" and response.status_code == 428:
                 raise ClearancePreconditionError(
-                    f"{source.collection_group}/{category}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر)"
+                    f"{source.collection_group}/{category}", page, response
                 )
             response.raise_for_status()
             payload = response.json()
@@ -329,6 +378,7 @@ def collect(
                 "category": category,
                 "complete_source": False,
                 "pages": page_summaries,
+                "error": exc.diagnostic,
             }, ensure_ascii=False), encoding="utf-8")
             print("PARTIAL_MANIFEST:" + partial_path.name, flush=True)
         raise
