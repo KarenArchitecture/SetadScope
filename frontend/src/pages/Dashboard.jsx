@@ -865,6 +865,8 @@ export default function Dashboard({ kind }) {
   const selectedExportBody = selectedRows.length
     ? { selected_ids: selectedRows.map(Number) }
     : undefined;
+  const currentPageKeys = new Set((result.items || []).map((item) => String(item.id)));
+  const hasSelectionOutsidePage = selectedRows.some((key) => !currentPageKeys.has(String(key)));
 
   function toggleSelectedRow(key, checked) {
     setSelectedRows((current) => checked
@@ -1022,7 +1024,7 @@ export default function Dashboard({ kind }) {
                 </span>}
                 {selectedRows.length > 0 && <>
                   <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
-                  <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>
+                  {hasSelectionOutsidePage && <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>}
                 </>}
                 <ExcelExportButton
                   href={exportHref}
