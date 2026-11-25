@@ -111,7 +111,8 @@ def filtered_tender_query(
     if city:
         query = query.where(Tender.city == city)
     if state:
-        query = query.where(Tender.state == state)
+        query = query.where(Tender.state.in_(("PUBLISHED", "منتشر شده", "منتشرشده", "منتشر‌شده"))
+                            if state == "PUBLISHED" else Tender.state == state)
     if type_name:
         query = query.where(Tender.type_name == type_name)
 

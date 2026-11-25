@@ -5,7 +5,7 @@ import { listingTypes } from "../listingTypes";
 const LINKS = [
   { page: "search", path: "/search", title: "همه آگهی‌ها", icon: Files },
   ...listingTypes,
-  { page: "quick", path: "/quick", title: "دسترسی سریع", icon: Zap },
+  { page: "quick", path: "/quick", title: "گزارش‌های آماده", icon: Zap },
   { page: "settings", path: "/settings", title: "تنظیمات سایت", icon: Settings2 },
 ];
 

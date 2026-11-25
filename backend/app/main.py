@@ -711,7 +711,8 @@ def filtered_query(
     if city:
         query = query.where(Auction.city == city)
     if state:
-        query = query.where(Auction.state == state)
+        query = query.where(Auction.state.in_(("PUBLISHED", "منتشر شده", "منتشرشده", "منتشر‌شده"))
+                            if state == "PUBLISHED" else Auction.state == state)
 
     query = query.where(
         *date_range(announcement_date, "announcement", announcement_from, announcement_to),
@@ -930,24 +931,38 @@ QuickKind = Literal["auctions", "tenders"]
 
 
 @app.post("/api/quick/{kind}/run", status_code=202)
-def start_quick(kind: QuickKind, background_tasks: BackgroundTasks):
+def start_quick(kind: QuickKind, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
     sources = auction_batch_sources("all") if kind == "auctions" else tuple(
         source for source in GLOBAL_COLLECTION_SOURCES if source["kind"] == "tenders"
     )
     key = f"quick:{kind}"
-    state = reserve_collection_batch(key, initial_global_collection_state(total_sources=len(sources)),
-                                     include_tenders=kind == "tenders")
     now = datetime.now(timezone.utc)
     cutoff = max(now - timedelta(minutes=15), now.astimezone(TEHRAN).replace(
         hour=0, minute=0, second=0, microsecond=0,
     ))
+    # Imports survive API restarts. A newer partial or failed import invalidates reuse.
+    runs = db.execute(select(
+        IngestionRun.collection_group, IngestionRun.category, IngestionRun.status, IngestionRun.finished_at,
+    ).where(IngestionRun.kind == kind, or_(
+        IngestionRun.started_at >= cutoff, IngestionRun.finished_at >= cutoff,
+    )).order_by(IngestionRun.id.desc()))
+    latest = {}
+    for group, category, status, finished in runs:
+        latest.setdefault((group, category), (status, finished))
+    state = reserve_collection_batch(key, initial_global_collection_state(total_sources=len(sources)),
+                                     include_tenders=kind == "tenders")
     pending = []
     with collection_lock:
         batch = collection_states[key]
         for source in sources:
             previous = collection_states[global_source_state_key(source)]
             finished = previous.get("finished_at")
-            if previous["status"] != "completed" or not finished or datetime.fromisoformat(finished) < cutoff:
+            if previous["status"] == "idle":
+                status, timestamp = latest.get((source["collection_group"], source["category"]), (None, None))
+                fresh = status == "success" and timestamp and timestamp >= cutoff
+            else:
+                fresh = previous["status"] == "completed" and finished and datetime.fromisoformat(finished) >= cutoff
+            if not fresh:
                 pending.append(source)
         batch["reused_sources"] = len(sources) - len(pending)
         batch["total_sources"] = len(pending)

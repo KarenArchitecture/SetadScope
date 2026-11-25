@@ -5,8 +5,8 @@ import ExcelExportButton from "../components/ExcelExportButton";
 import "./QuickActions.css";
 
 const actions = {
-  auctions: { title: "مزایده‌های امروز", icon: CalendarDays, text: "جمع‌آوری همه انواع مزایده و دانلود اکسل به ترتیب ساعت اعلام", filters: "category=all&collection_group=all&today_only=true" },
-  tenders: { title: "مناقصه‌های گلستان", icon: MapPin, text: "دانلود مناقصه‌های استان گلستان از جدیدترین تاریخ اعلام", filters: "province=" + encodeURIComponent("گلستان") },
+  auctions: { title: "مزایده‌های امروز", icon: CalendarDays, text: "دانلود خودکار اکسل مزایده‌های منتشرشده و مهلت‌دار امروز به ترتیب ساعت اعلام", filters: "category=all&collection_group=all&today_only=true" },
+  tenders: { title: "مناقصه‌های گلستان", icon: MapPin, text: "دانلود خودکار اکسل مناقصه‌های منتشرشده و مهلت‌دار استان گلستان از جدیدترین تاریخ اعلام", filters: "province=" + encodeURIComponent("گلستان") },
 };
 const key = "setadscope.quickRun";
 const fa = value => Number(value || 0).toLocaleString("fa-IR");
@@ -99,7 +99,7 @@ export default function QuickActions({ visible }) {
   }
 
   return <div className="quick-actions">
-    {visible && <section className="dashboard-content"><h1>دسترسی سریع</h1>
+    {visible && <section className="dashboard-content"><h1>گزارش‌های آماده</h1>
       <div className="quick-grid">{Object.entries(actions).map(([kind, item]) =>
         <button key={kind} className="quick-card" disabled={job && job.kind !== kind} onClick={() => start(kind)}>
           <item.icon size={42}/><strong>{item.title}</strong><span>{item.text}</span>
@@ -115,7 +115,7 @@ export default function QuickActions({ visible }) {
       {state?.failed_sources?.map(s => <p key={s.key}>{s.label} · {s.error}</p>)}
       {!stopping && terminal && state.status !== "cancelled" && action && <><p>{state.failed_sources?.length > 0 && "گزارش ناقص است."}</p>
         <ExcelExportButton autoStart={!exportDone} onComplete={() => { setExportDone(true); sessionStorage.removeItem(key); }}
-          href={"/api/" + job.kind + "/export.xlsx?" + action.filters + "&matched_only=false&sort_by=announcement_at&sort_dir=desc"}
+          href={"/api/" + job.kind + "/export.xlsx?" + action.filters + "&status=active&state=PUBLISHED&matched_only=false&sort_by=announcement_at&sort_dir=desc"}
           filename={action.title + ".xlsx"} /></>}
     </dialog>
     <dialog ref={confirmation} aria-labelledby="quick-stop-title">

@@ -1,4 +1,5 @@
 from copy import deepcopy
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -242,7 +243,7 @@ def test_quick_stop_terminates_current_process_and_skips_remaining_sources(monke
     calls = []
     try:
         tasks = BackgroundTasks()
-        job = main.start_quick("auctions", tasks)
+        job = main.start_quick("auctions", tasks, MagicMock())
         def stop_during_first_source(kind, group, category):
             key = main.collection_state_key(group, category)
             process = Mock()
@@ -267,14 +268,27 @@ def test_quick_export_reuses_only_recent_success(monkeypatch):
         now = main.datetime.now(main.timezone.utc)
         source.update(status="completed", finished_at=now.isoformat())
         tasks = BackgroundTasks()
-        result = main.start_quick("tenders", tasks)
+        result = main.start_quick("tenders", tasks, MagicMock())
         assert result["status"] == "completed" and result["reused_sources"] == 1
         assert not tasks.tasks
         for status, age in [("failed", 0), ("completed", 16)]:
             source.update(status=status, finished_at=(now - main.timedelta(minutes=age)).isoformat())
             tasks = BackgroundTasks()
-            assert main.start_quick("tenders", tasks)["reused_sources"] == 0
+            assert main.start_quick("tenders", tasks, MagicMock())["reused_sources"] == 0
             assert len(tasks.tasks) == 1
             main.collection_states["quick:tenders"]["status"] = "completed"
+    finally:
+        _restore_states(snapshot)
+
+
+def test_quick_reuses_import_after_restart(monkeypatch):
+    snapshot = _snapshot_states()
+    try:
+        main.collection_states["tenders"]["status"] = "idle"
+        tasks = BackgroundTasks()
+        db = MagicMock()
+        db.execute.return_value = [(None, None, "success", main.datetime.now(main.timezone.utc))]
+        assert main.start_quick("tenders", tasks, db)["reused_sources"] == 1
+        assert not tasks.tasks
     finally:
         _restore_states(snapshot)
