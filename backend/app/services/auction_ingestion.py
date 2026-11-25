@@ -224,6 +224,8 @@ def import_auction_pages(
     category: str,
     progress_callback=None,
     collection_group: str | None = None,
+    *,
+    incomplete_reason: str | None = None,
 ) -> dict[str, int]:
     group = resolve_collection_group(category, collection_group)
     if category not in AUCTION_CATEGORIES:
@@ -294,7 +296,8 @@ def import_auction_pages(
             if progress_callback:
                 progress_callback({"pages_completed": i, "total_pages": len(paths), **totals})
         run = db.get(IngestionRun, run_id)
-        run.status = "success"
+        run.status = "failed" if incomplete_reason else "success"
+        run.error = incomplete_reason
         run.finished_at = datetime.now(timezone.utc)
         run.fetched = totals["fetched"]
         run.matched = totals["matched"]

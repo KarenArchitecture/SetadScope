@@ -1,19 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  ChevronDown,
   Building2,
-  CalendarDays,
   CheckCircle2,
   CircleDollarSign,
-  Database,
+  Check,
   FileText,
-  Filter,
   Gavel,
   Info,
   LoaderCircle,
   MapPin,
   Play,
-  RotateCcw,
+  SlidersHorizontal,
   X,
 } from "lucide-react";
 import {
@@ -22,56 +19,36 @@ import {
   getCollectionStatus,
   getTenderById,
   getTenders,
+  listingQueryParams,
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
 import ExcelExportButton from "../components/ExcelExportButton";
-import DeadlineStatusSelect from "../components/DeadlineStatusSelect";
-import JalaliDatePicker from "../components/JalaliDatePicker";
+import FiltersPanel from "../components/FiltersPanel";
+import useListingFilters from "../hooks/useListingFilters";
 import { notifyToast } from "../utils/toast";
 import "./Dashboard.css";
 import "../styles/redesign.css";
 
 const PAGE_SIZE = 20;
 const AUCTION_GROUPS = [
-  { key: "executive_agencies", label: "دستگاه‌های اجرایی", description: "مزایده‌های دستگاه‌های اجرایی" },
-  { key: "amval_tamliki", label: "سازمان جمع‌آوری و فروش اموال تملیکی", description: "مزایده‌های اموال تملیکی" },
+  { key: "all", label: "همه" },
+  { key: "executive_agencies", label: "دستگاه‌های اجرایی" },
+  { key: "amval_tamliki", label: "سازمان جمع‌آوری و فروش اموال تملیکی" },
 ];
-const SHARED_AUCTION_CATEGORIES = [
+const AUCTION_CATEGORIES = [
+  { key: "movable", label: "منقول" },
+  { key: "immovable", label: "غیرمنقول" },
+  { key: "rental", label: "اجاره" },
+  { key: "minor", label: "جزئی" },
   { key: "clearance", label: "حراج مشترک" },
 ];
-const AUCTION_CATEGORIES_BY_GROUP = {
-  executive_agencies: [
-    { key: "movable", label: "منقول" },
-    { key: "immovable", label: "غیرمنقول" },
-    { key: "rental", label: "اجاره" },
-    { key: "minor", label: "جزئی" },
-  ],
-  amval_tamliki: [
-    { key: "movable", label: "منقول" },
-    { key: "immovable", label: "غیرمنقول" },
-    { key: "rental", label: "اجاره" },
-    { key: "minor", label: "جزئی" },
-  ],
-  shared: [{ key: "clearance", label: "حراج مشترک" }],
+const CATEGORY_LABELS = Object.fromEntries(AUCTION_CATEGORIES.map(({ key, label }) => [key, label]));
+const GROUP_LABELS = {
+  ...Object.fromEntries(AUCTION_GROUPS.map(({ key, label }) => [key, label])),
+  shared: "حراج مشترک",
 };
-const ACTIVE_STATES = new Set(["collecting", "importing"]);
-const EMPTY_FILTERS = {
-  province: "",
-  city: "",
-  status: "all",
-  state: "",
-  type_name: "",
-  announcement_from: "",
-  announcement_to: "",
-  deadline_from: "",
-  deadline_to: "",
-  documents_deadline_from: "",
-  documents_deadline_to: "",
-  price_min: "",
-  price_max: "",
-};
-
+const ACTIVE_STATES = new Set(["collecting", "importing", "running"]);
 function displayState(value) {
   return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
 }
@@ -196,26 +173,30 @@ function StatCard({
 function CollectionProgress({ state, kind, onDismiss }) {
   if (!state || state.status === "idle") return null;
 
-  const isTender = kind === "tenders";
+  const isBatch = state.kind === "auction_batch";
   const active = ACTIVE_STATES.has(state.status);
-  const percent = Math.max(0, Math.min(100, Number(state.progress_percent || 0)));
-  const statusLabel = state.status === "completed"
-    ? "با موفقیت تکمیل شد"
-    : state.status === "failed"
-      ? "اجرای ناموفق"
-      : state.status === "importing"
-        ? "در حال ذخیره در پایگاه داده"
-        : "در حال دریافت از سامانه ستاد";
+  const finished = state.status === "completed" || state.status === "completed_with_errors";
+  const percent = Math.max(0, Math.min(100, Number(
+    (isBatch ? state.overall_progress_percent : state.progress_percent) || 0,
+  )));
+  const statusLabel = {
+    completed: "با موفقیت تکمیل شد",
+    completed_with_errors: "جمع‌آوری با خطا پایان یافت",
+    failed: "اجرای ناموفق",
+    importing: "در حال ذخیره در پایگاه داده",
+    running: "در حال جمع‌آوری مزایده‌ها",
+  }[state.status] || "در حال دریافت از سامانه ستاد";
+  const panelLabel = kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
 
   return (
     <section className={"collection-progress " + (state.status === "failed" ? "collection-progress--failed" : "")}>
       <div className="collection-progress__top">
         <div>
-          <span className="eyebrow">{isTender ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها"}</span>
+          <span className="eyebrow">{panelLabel}</span>
           <strong>{statusLabel}</strong>
         </div>
         <span className="collection-progress__percent">{formatNumber(percent)}٪</span>
-        {state.status === "completed" && percent >= 100 && (
+        {finished && percent >= 100 && (
           <button
             type="button"
             className="collection-progress__dismiss"
@@ -240,29 +221,62 @@ function CollectionProgress({ state, kind, onDismiss }) {
           style={{ width: (active && percent === 0 ? 2 : percent) + "%" }}
         />
       </div>
-      <p className="collection-progress__message">{state.message}</p>
+      <p className="collection-progress__message">
+        {isBatch && active && state.current_source_label ? (
+          <>
+            منبع {formatNumber(state.current_source_index)} از {formatNumber(state.total_sources)}
+            {" · "}{state.current_source_label} ({formatNumber(state.current_progress_percent)}٪)
+            {state.current_phase === "importing" && " · در حال ذخیره"}
+          </>
+        ) : state.message}
+      </p>
       <div className="collection-progress__metrics">
-        <span>
-          <strong>{formatNumber(state.pages_completed || 0)}</strong>
-          {" / "}
-          {formatNumber(state.total_pages)}
-          {" صفحه"}
-        </span>
-        <span>
-          <strong>{formatNumber(state.records_fetched || 0)}</strong>
-          {state.records_total
-            ? " / " + formatNumber(state.records_total) + " رکورد دریافت‌شده"
-            : " رکورد دریافت‌شده"}
-        </span>
-        <span>
-          <strong>{formatNumber(state.records_stored || 0)}</strong>
-          {" رکورد ذخیره‌شده"}
-        </span>
+        {isBatch ? (
+          <>
+            <span><strong>{formatNumber(state.completed_sources)}</strong> از {formatNumber(state.total_sources)} منبع اجرا شده</span>
+            <span><strong>{formatNumber(state.successful_sources)}</strong> منبع موفق</span>
+            {active && state.current_source_key && (
+              <>
+                <span><strong>{formatNumber(state.current_pages_completed)}</strong> / {formatNumber(state.current_total_pages)} صفحه</span>
+                <span><strong>{formatNumber(state.current_records_fetched)}</strong> رکورد دریافت‌شده</span>
+              </>
+            )}
+          </>
+        ) : (
+          <>
+            <span>
+              <strong>{formatNumber(state.pages_completed || 0)}</strong>
+              {" / "}
+              {formatNumber(state.total_pages)}
+              {" صفحه"}
+            </span>
+            <span>
+              <strong>{formatNumber(state.records_fetched || 0)}</strong>
+              {state.records_total
+                ? " / " + formatNumber(state.records_total) + " رکورد دریافت‌شده"
+                : " رکورد دریافت‌شده"}
+            </span>
+            <span>
+              <strong>{formatNumber(state.records_stored || 0)}</strong>
+              {" رکورد ذخیره‌شده"}
+            </span>
+          </>
+        )}
       </div>
       {state.status === "failed" && state.error && (
         <details className="collection-progress__error">
           <summary>نمایش جزئیات خطا</summary>
           <pre>{state.error}</pre>
+        </details>
+      )}
+      {isBatch && state.failed_sources?.length > 0 && (
+        <details className="collection-progress__error">
+          <summary>{formatNumber(state.failed_sources.length)} منبع ناموفق</summary>
+          <ul className="collection-progress__failed-sources">
+            {state.failed_sources.map(({ key, label, error }) => (
+              <li key={key}><strong>{label}</strong><pre>{error}</pre></li>
+            ))}
+          </ul>
         </details>
       )}
       {state.status === "completed" && state.totals && (
@@ -276,235 +290,56 @@ function CollectionProgress({ state, kind, onDismiss }) {
   );
 }
 
-function FilterField({ label, children, wide = false, className = "" }) {
-  return (
-    <label className={"filter-field " + (wide ? "filter-field--wide " : "") + className}>
-      <span>{label}</span>
-      {children}
-    </label>
-  );
-}
-
-function FiltersPanel({
-  kind,
-  filters,
-  options,
-  onChange,
-  onApply,
-  onReset,
-  isOpen,
-  onToggle,
-  activeCount,
-  canReset,
-  matchedOnly,
-  onMatchedOnlyChange,
-}) {
-  const isTender = kind === "tenders";
-  const provinceOptions = options.provinces || [];
-  const cityOptions = (options.cities || [])
-    .filter((item) => item.province === filters.province)
-    .map((item) => item.city);
-  const stateOptions = options.states || [];
-  const typeOptions = options.types || [];
+function AuctionScopeFilters({ collectionGroup, categories, onGroupChange, onCategoryChange }) {
+  const allTypes = categories.length === 0;
+  const hasClearance = allTypes || categories.includes("clearance");
+  const groupLabel = categories.length === 1 && hasClearance
+    ? GROUP_LABELS.shared
+    : collectionGroup === "all" ? "هر دو مجموعه" : GROUP_LABELS[collectionGroup];
+  const categoryLabel = allTypes ? "همه انواع" : categories.map((key) => CATEGORY_LABELS[key]).join("، ");
 
   return (
-    <section className={"filters-panel " + (isOpen ? "filters-panel--open" : "")}>
-      <header className="filters-panel__header">
-        <button
-          type="button"
-          className="filters-panel__toggle"
-          onClick={onToggle}
-          aria-expanded={isOpen}
-        >
-          <span className="filters-panel__toggle-main">
-            <span className="filters-panel__toggle-icon"><Filter size={16} /></span>
-            <span className="filters-panel__toggle-copy">
-              <strong>جست‌وجوی پیشرفته</strong>
-              <small>
-                {activeCount
-                  ? toPersianDigits(activeCount) + " فیلتر فعال"
-                  : "استان، شهر، وضعیت مهلت و بازه‌های زمانی"}
-              </small>
-            </span>
-          </span>
-          <span className="filters-panel__toggle-action">
-            {isOpen ? "بستن جست‌وجو" : "نمایش جست‌وجو"}
-            <ChevronDown className={isOpen ? "filters-panel__chevron filters-panel__chevron--open" : "filters-panel__chevron"} size={17} />
-          </span>
-        </button>
-        <div className="filters-panel__quick-actions">
-          <label className="filters-panel__match" htmlFor="filter-matched-only">
-            <input
-              id="filter-matched-only"
-              type="checkbox"
-              checked={matchedOnly}
-              onChange={(event) => onMatchedOnlyChange(event.target.checked)}
-            />
-            فقط آگهی‌های مرتبط با کلیدواژه‌ها
-          </label>
-          <button type="button" className="filters-reset" onClick={onReset} disabled={!canReset} title="حذف تمام فیلترهای انتخابی و اعمال‌شده">
-            <RotateCcw size={14} /> حذف فیلترها
-          </button>
+    <section className="auction-scope" aria-labelledby="auction-scope-title">
+      <h2 className="auction-scope__title" id="auction-scope-title">
+        <SlidersHorizontal size={17} aria-hidden="true" />
+        محدودهٔ مزایده‌ها
+      </h2>
+      <div className="auction-scope__row">
+        <div className="auction-scope__description">
+          <h3 id="auction-scope-group">مجموعه آگهی</h3>
+          <p id="auction-scope-group-hint">یک مجموعه یا هر دو مجموعه را انتخاب کنید.</p>
         </div>
-      </header>
-
-      <div className="filters-panel__collapsible" aria-hidden={!isOpen} inert={!isOpen}>
-        <div className="filters-panel__collapsible-content">
-          <div className="filters-panel__body">
-            <div className={"filters-grid " + (isTender ? "filters-grid--tenders" : "filters-grid--auctions")}>
-              <FilterField label="استان">
-                <select value={filters.province} onChange={(event) => onChange("province", event.target.value)}>
-                  <option value="">همه استان‌ها</option>
-                  {provinceOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                </select>
-              </FilterField>
-
-              <FilterField label="شهر">
-                <select
-                  value={filters.city}
-                  disabled={!filters.province}
-                  onChange={(event) => onChange("city", event.target.value)}
-                >
-                  <option value="">{filters.province ? "همه شهرهای استان" : "ابتدا استان را انتخاب کنید"}</option>
-                  {cityOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                </select>
-              </FilterField>
-
-              <FilterField label="وضعیت مهلت">
-                <DeadlineStatusSelect
-                  value={filters.status}
-                  onChange={(value) => onChange("status", value)}
-                />
-              </FilterField>
-
-              <FilterField label="وضعیت آگهی">
-                <select value={filters.state} onChange={(event) => onChange("state", event.target.value)}>
-                  <option value="">همه وضعیت‌ها</option>
-                  {stateOptions.map((value) => <option key={value} value={value}>{displayState(value)}</option>)}
-                </select>
-              </FilterField>
-
-              {isTender ? (
-                <FilterField label="نوع فراخوان">
-                  <select value={filters.type_name} onChange={(event) => onChange("type_name", event.target.value)}>
-                    <option value="">همه انواع</option>
-                    {typeOptions.map((value) => <option key={value} value={value}>{value}</option>)}
-                  </select>
-                </FilterField>
-              ) : (
-                <>
-                  <FilterField label="حداقل مبلغ پایه" className="filter-field--price">
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      inputMode="decimal"
-                      placeholder="از مبلغ"
-                      value={filters.price_min}
-                      onChange={(event) => onChange("price_min", event.target.value)}
-                    />
-                  </FilterField>
-                  <FilterField label="حداکثر مبلغ پایه" className="filter-field--price">
-                    <input
-                      type="number"
-                      min="0"
-                      step="any"
-                      inputMode="decimal"
-                      placeholder="تا مبلغ"
-                      value={filters.price_max}
-                      onChange={(event) => onChange("price_max", event.target.value)}
-                    />
-                  </FilterField>
-                </>
-              )}
-
-              <div className="filter-date-group">
-                <div className="filter-date-group__title">
-                  <CalendarDays size={14} />
-                  {isTender ? "بازه تاریخ اعلام مناقصه" : "بازه تاریخ اعلام / نمایش مزایده"}
-                </div>
-                <div className="filter-date-group__inputs">
-                  <FilterField label="از تاریخ">
-                    <JalaliDatePicker
-                      value={filters.announcement_from}
-                      onChange={(value) => onChange("announcement_from", value)}
-                      ariaLabel="از تاریخ اعلام به شمسی"
-                    />
-                  </FilterField>
-                  <FilterField label="تا تاریخ">
-                    <JalaliDatePicker
-                      value={filters.announcement_to}
-                      onChange={(value) => onChange("announcement_to", value)}
-                      ariaLabel="تا تاریخ اعلام به شمسی"
-                    />
-                  </FilterField>
-                </div>
-              </div>
-
-              <div className="filter-date-group">
-                <div className="filter-date-group__title">
-                  <CalendarDays size={14} />
-                  بازه مهلت پیشنهاد
-                </div>
-                <div className="filter-date-group__inputs">
-                  <FilterField label="از تاریخ">
-                    <JalaliDatePicker
-                      value={filters.deadline_from}
-                      onChange={(value) => onChange("deadline_from", value)}
-                      ariaLabel="از تاریخ مهلت پیشنهاد به شمسی"
-                    />
-                  </FilterField>
-                  <FilterField label="تا تاریخ">
-                    <JalaliDatePicker
-                      value={filters.deadline_to}
-                      onChange={(value) => onChange("deadline_to", value)}
-                      ariaLabel="تا تاریخ مهلت پیشنهاد به شمسی"
-                    />
-                  </FilterField>
-                </div>
-              </div>
-
-              {isTender && (
-                <div className="filter-date-group">
-                  <div className="filter-date-group__title">
-                    <CalendarDays size={14} />
-                    بازه مهلت دریافت اسناد
-                  </div>
-                  <div className="filter-date-group__inputs">
-                    <FilterField label="از تاریخ">
-                      <JalaliDatePicker
-                        value={filters.documents_deadline_from}
-                        onChange={(value) => onChange("documents_deadline_from", value)}
-                        ariaLabel="از تاریخ مهلت اسناد به شمسی"
-                      />
-                    </FilterField>
-                    <FilterField label="تا تاریخ">
-                      <JalaliDatePicker
-                        value={filters.documents_deadline_to}
-                        onChange={(value) => onChange("documents_deadline_to", value)}
-                        ariaLabel="تا تاریخ مهلت اسناد به شمسی"
-                      />
-                    </FilterField>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="filters-panel__footer">
-            <span>فیلترها روی کل آرشیو اعمال می‌شوند، نه فقط رکوردهای صفحه جاری.</span>
-            <button type="button" className="button button--primary" onClick={onApply}>
-              <Filter size={15} /> اعمال فیلترها
+        <div className="auction-scope__options" role="group" aria-labelledby="auction-scope-group" aria-describedby="auction-scope-group-hint">
+          {AUCTION_GROUPS.map(({ key, label }) => (
+            <button key={key} type="button" aria-pressed={collectionGroup === key} onClick={() => onGroupChange(key)}>
+              {label}
             </button>
-          </div>
+          ))}
         </div>
       </div>
+      <div className="auction-scope__row">
+        <div className="auction-scope__description">
+          <h3 id="auction-scope-category">نوع مزایده</h3>
+          <p id="auction-scope-category-hint">چند نوع را هم‌زمان انتخاب کنید یا «همه» را بزنید.</p>
+        </div>
+        <div className="auction-scope__options" role="group" aria-labelledby="auction-scope-category" aria-describedby="auction-scope-category-hint">
+          {[{ key: "all", label: "همه" }, ...AUCTION_CATEGORIES].map(({ key, label }) => {
+            const selected = key === "all" ? allTypes : categories.includes(key);
+            return (
+              <button key={key} type="button" aria-pressed={selected} onClick={() => onCategoryChange(key)}>
+                {selected && <Check size={13} aria-hidden="true" />}
+                {label}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      <footer className="auction-scope__footer">
+        <span className="auction-scope__selection"><strong>نمای فعلی</strong> {groupLabel} · {categoryLabel}</span>
+        {hasClearance && <span><Info size={14} aria-hidden="true" /> حراج مشترک از تابلوی مرکزی ستاد دریافت می‌شود.</span>}
+      </footer>
     </section>
   );
-}
-
-function toPersianDigits(value) {
-  return new Intl.NumberFormat("fa-IR").format(value);
 }
 
 export function DetailModal({ record, kind, loading, onClose }) {
@@ -532,7 +367,7 @@ export function DetailModal({ record, kind, loading, onClose }) {
             amval_tamliki: "سازمان جمع‌آوری و فروش اموال تملیکی",
             shared: "حراج مشترک ستاد",
           })[record.collection_group] || "—"],
-          ["دسته مزایده", AUCTION_CATEGORIES_BY_GROUP[record.collection_group]?.find((item) => item.key === record.category)?.label || "—"],
+          ["دسته مزایده", CATEGORY_LABELS[record.category] || "—"],
           ["شناسه منبع", record.source_party_id],
           ["شناسه مزایده", record.auction_id],
           ["عنوان مورد", record.item_title],
@@ -627,16 +462,26 @@ export default function Dashboard({ kind }) {
   const isTender = kind === "tenders";
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [collectionGroup, setCollectionGroup] = useState("executive_agencies");
-  const [auctionCategory, setAuctionCategory] = useState("movable");
-  const [matchedOnly, setMatchedOnly] = useState(!isTender);
-  const availableCategories = [
-    ...(AUCTION_CATEGORIES_BY_GROUP[collectionGroup] || AUCTION_CATEGORIES_BY_GROUP.executive_agencies),
-    ...SHARED_AUCTION_CATEGORIES,
-  ];
-  const selectedCategoryLabel = availableCategories.find((item) => item.key === auctionCategory)?.label || "منقول";
-  // Clearance is a single Central Board feed shared by both owning collections.
+  // An empty selection is the «همه» view.
+  const [selectedCategories, setSelectedCategories] = useState([]);
+  const auctionCategory = selectedCategories.length === 1 ? selectedCategories[0] : null;
+  const selectedCategoryLabel = CATEGORY_LABELS[auctionCategory] || (
+    selectedCategories.length ? "انواع انتخاب‌شده" : "همه انواع"
+  );
   const isSharedClearance = !isTender && auctionCategory === "clearance";
   const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
+  const isAuctionBatch = !isTender && (!auctionCategory || effectiveCollectionGroup === "all");
+  const collectionCategory = isAuctionBatch ? "all" : auctionCategory;
+  const batchCategories = isAuctionBatch ? selectedCategories : undefined;
+  const collectionLabel = isTender ? "مناقصه‌ها" : "مزایده‌ها";
+  const collectionTarget = useMemo(() => (
+    [kind, collectionCategory, effectiveCollectionGroup, batchCategories]
+  ), [kind, collectionCategory, effectiveCollectionGroup, batchCategories]);
+  const auctionScope = useMemo(() => ({
+    category: "all",
+    categories: selectedCategories,
+    collection_group: effectiveCollectionGroup,
+  }), [selectedCategories, effectiveCollectionGroup]);
   const [result, setResult] = useState({
     items: [],
     page: 1,
@@ -645,28 +490,28 @@ export default function Dashboard({ kind }) {
     archive_stats: {},
     filter_options: {},
   });
+  const [selectedRows, setSelectedRows] = useState([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
-  const [filterDraft, setFilterDraft] = useState({ ...EMPTY_FILTERS });
-  const [appliedFilters, setAppliedFilters] = useState({ ...EMPTY_FILTERS });
-  const [filtersOpen, setFiltersOpen] = useState(false);
-  const isActiveFilter = ([key, value]) => value !== "" && !(key === "status" && value === "all");
-  const activeFilterCount = Object.entries(appliedFilters).filter(isActiveFilter).length + Number(matchedOnly);
-  const canResetFilters = activeFilterCount > 0 || Object.entries(filterDraft).some(isActiveFilter);
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
+  const [prioritizeGolestan, setPrioritizeGolestan] = useState(true);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { params: filterParams, panel: filterPanel } = useListingFilters(setError, !isTender);
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [collectionState, setCollectionState] = useState({ status: "idle" });
+  const [trackedCollection, setTrackedCollection] = useState(null);
   const [collectionProgressDismissed, setCollectionProgressDismissed] = useState(false);
   const dismissedCollectionRuns = useRef(new Set());
   const lastRefreshedRun = useRef(null);
   const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
+  const startRequestVersion = useRef(0);
+  const [collectionStarting, setCollectionStarting] = useState(false);
 
   const loadPage = useCallback(async (nextPage = 1) => {
     const requestId = ++lastRequestId.current;
@@ -676,11 +521,11 @@ export default function Dashboard({ kind }) {
       const fetchPage = isTender ? getTenders : getAuctions;
       const data = await fetchPage({
         search,
-        ...appliedFilters,
-        matched_only: matchedOnly,
-        ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
+        ...filterParams,
+        ...(!isTender ? auctionScope : {}),
         sortBy,
         sortDir,
+        ...(isTender ? { prioritize_golestan: prioritizeGolestan } : {}),
         page: nextPage,
         pageSize,
       });
@@ -696,61 +541,51 @@ export default function Dashboard({ kind }) {
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
     }
-  }, [isTender, auctionCategory, collectionGroup, matchedOnly, search, appliedFilters, sortBy, sortDir, pageSize]);
+  }, [isTender, auctionScope, filterParams, search, sortBy, sortDir, prioritizeGolestan, pageSize]);
 
   useEffect(() => {
     loadPage(1);
   }, [loadPage]);
 
   useEffect(() => {
+    if (trackedCollection) return undefined;
     let active = true;
-    getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup).then((status) => {
-      if (active) setCollectionState(status);
+    const requestVersion = startRequestVersion.current;
+    getCollectionStatus(...collectionTarget).then((status) => {
+      if (!active || requestVersion !== startRequestVersion.current) return;
+      setCollectionState(status);
+      if (ACTIVE_STATES.has(status.status)) setTrackedCollection(collectionTarget);
     }).catch(() => {});
     return () => { active = false; };
-  }, [kind, auctionCategory, effectiveCollectionGroup]);
+  }, [collectionTarget, trackedCollection]);
 
   useEffect(() => {
-    if (!ACTIVE_STATES.has(collectionState.status)) return undefined;
+    if (!trackedCollection || !ACTIVE_STATES.has(collectionState.status)) return undefined;
     let cancelled = false;
     let requestInFlight = false;
     const timer = window.setInterval(async () => {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const nextState = await getCollectionStatus(kind, auctionCategory, effectiveCollectionGroup);
+        const nextState = await getCollectionStatus(...trackedCollection);
         if (cancelled) return;
         setCollectionState(nextState);
         const completedRunKey = nextState.finished_at || nextState.started_at;
-        if (
-          nextState.status === "completed" &&
-          completedRunKey &&
-          lastNotifiedCollectionRun.current !== completedRunKey
-        ) {
+        const finished = ["completed", "completed_with_errors", "failed"].includes(nextState.status);
+        if (finished && completedRunKey && lastNotifiedCollectionRun.current !== completedRunKey) {
           lastNotifiedCollectionRun.current = completedRunKey;
           const stored = formatNumber(nextState.records_stored || nextState.totals?.stored || 0);
-          notifyToast(
-            "success",
-            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
-              " با موفقیت انجام شد؛ " + stored + " رکورد ذخیره شد.",
-            { duration: 5200 },
-          );
-          if (lastRefreshedRun.current !== nextState.finished_at) {
-            lastRefreshedRun.current = nextState.finished_at;
+          const message = nextState.kind === "auction_batch"
+            ? nextState.message
+            : nextState.status === "completed"
+              ? "جمع‌آوری " + collectionLabel + " با موفقیت انجام شد. " + stored + " رکورد ذخیره شد."
+              : "جمع‌آوری " + collectionLabel + " ناموفق بود. جزئیات در پنل وضعیت اجرا قابل مشاهده است.";
+          notifyToast(nextState.status === "completed" ? "success" : "error", message, { duration: 5500 });
+          const hasSavedData = nextState.status !== "failed" || nextState.records_stored > 0;
+          if (hasSavedData && lastRefreshedRun.current !== completedRunKey) {
+            lastRefreshedRun.current = completedRunKey;
             await loadPage(1);
           }
-        } else if (
-          nextState.status === "failed" &&
-          completedRunKey &&
-          lastNotifiedCollectionRun.current !== completedRunKey
-        ) {
-          lastNotifiedCollectionRun.current = completedRunKey;
-          notifyToast(
-            "error",
-            "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel) +
-              " ناموفق بود. جزئیات خطا در پنل وضعیت اجرا قابل مشاهده است.",
-            { duration: 6500 },
-          );
         }
       } catch {
         if (!cancelled) setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
@@ -762,7 +597,7 @@ export default function Dashboard({ kind }) {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, kind, auctionCategory, effectiveCollectionGroup, loadPage]);
+  }, [collectionState.status, trackedCollection, loadPage, collectionLabel]);
 
   const provinceCount = new Set(result.items.map((item) => item.province).filter(Boolean)).size;
   const organizationCount = new Set(result.items.map((item) => item.organization).filter(Boolean)).size;
@@ -840,6 +675,14 @@ export default function Dashboard({ kind }) {
           </div>
         ),
       },
+      ...(!auctionCategory ? [{
+        key: "category", label: "نوع مزایده", sortable: true, sortKey: "category",
+        render: (item) => CATEGORY_LABELS[item.category] || item.category,
+      }] : []),
+      ...(collectionGroup === "all" && !isSharedClearance ? [{
+        key: "collection_group", label: "مجموعه", sortable: true, sortKey: "collection_group",
+        render: (item) => GROUP_LABELS[item.collection_group] || item.collection_group,
+      }] : []),
       ...(auctionCategory === "rental" ? [{
         key: "item_title",
         label: "مورد اجاره",
@@ -909,93 +752,48 @@ export default function Dashboard({ kind }) {
         ),
       },
     ];
-  }, [isTender, auctionCategory]);
+  }, [isTender, auctionCategory, collectionGroup, isSharedClearance]);
 
-  function handleCategoryChange(category) {
-    if (category === auctionCategory) return;
-    lastRequestId.current += 1;
-    setAuctionCategory(category);
-    setSearch("");
-    setSearchInput("");
-    setFilterDraft({ ...EMPTY_FILTERS });
-    setAppliedFilters({ ...EMPTY_FILTERS });
-    setPage(1);
-    setSortBy("proposal_deadline");
-    setSortDir("asc");
-    setFiltersOpen(false);
-    setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
+  function clearCollectionState() {
+    if (collectionStarting || collectionRunning) return;
+    setTrackedCollection(null);
     setCollectionState({ status: "idle" });
     setCollectionProgressDismissed(false);
     lastRefreshedRun.current = null;
     lastNotifiedCollectionRun.current = null;
   }
 
+  function handleCategoryChange(category) {
+    if (category === "all" && selectedCategories.length === 0) return;
+    lastRequestId.current += 1;
+    const next = category === "all"
+      ? []
+      : selectedCategories.includes(category)
+        ? selectedCategories.filter((key) => key !== category)
+        : [...selectedCategories, category];
+    setSelectedCategories(next.length === AUCTION_CATEGORIES.length ? [] : next);
+    if (["item_title", "asset_type", "category"].includes(sortBy)) {
+      setSortBy("proposal_deadline");
+      setSortDir("asc");
+    }
+    clearCollectionState();
+  }
+
   function handleCollectionGroupChange(nextGroup) {
     if (nextGroup === collectionGroup) return;
-    lastRequestId.current += 1;
+    if (!isSharedClearance) lastRequestId.current += 1;
     setCollectionGroup(nextGroup);
-    setSearch("");
-    setSearchInput("");
-    setFilterDraft({ ...EMPTY_FILTERS });
-    setAppliedFilters({ ...EMPTY_FILTERS });
-    setMatchedOnly(true);
-    setPage(1);
-    setSortBy("proposal_deadline");
-    setSortDir("asc");
-    setFiltersOpen(false);
-    setResult({ items: [], page: 1, pages: 0, total: 0, archive_stats: {}, filter_options: {} });
-    setCollectionState({ status: "idle" });
-    setCollectionProgressDismissed(false);
-    setError("");
-    lastRefreshedRun.current = null;
-    lastNotifiedCollectionRun.current = null;
+    if (sortBy === "collection_group") {
+      setSortBy("proposal_deadline");
+      setSortDir("asc");
+    }
+    if (!isSharedClearance) clearCollectionState();
   }
 
   function handleSearch(event) {
     event.preventDefault();
     setPage(1);
     setSearch(searchInput.trim());
-  }
-
-  function handleFilterChange(name, value) {
-    setFilterDraft((current) => ({
-      ...current,
-      [name]: value,
-      ...(name === "province" ? { city: "" } : {}),
-    }));
-  }
-
-  function handleApplyFilters() {
-    const min = filterDraft.price_min === "" ? null : Number(filterDraft.price_min);
-    const max = filterDraft.price_max === "" ? null : Number(filterDraft.price_max);
-    if (!isTender && min !== null && max !== null && min > max) {
-      setError("حداقل مبلغ نمی‌تواند از حداکثر مبلغ بیشتر باشد.");
-      return;
-    }
-    const dateRanges = [
-      ["announcement_from", "announcement_to"],
-      ["deadline_from", "deadline_to"],
-      ["documents_deadline_from", "documents_deadline_to"],
-    ];
-    const hasInvalidDateRange = dateRanges.some(([fromKey, toKey]) =>
-      filterDraft[fromKey] && filterDraft[toKey] && filterDraft[fromKey] > filterDraft[toKey]
-    );
-    if (hasInvalidDateRange) {
-      setError("تاریخ شروع هر بازه نمی‌تواند بعد از تاریخ پایان آن باشد.");
-      return;
-    }
-    setError("");
-    setPage(1);
-    setAppliedFilters({ ...filterDraft });
-    setFiltersOpen(false);
-  }
-
-  function handleResetFilters() {
-    setFilterDraft({ ...EMPTY_FILTERS });
-    setAppliedFilters({ ...EMPTY_FILTERS });
-    setMatchedOnly(false);
-    setError("");
-    setPage(1);
   }
 
   function handleSort(key) {
@@ -1009,17 +807,22 @@ export default function Dashboard({ kind }) {
   }
 
   async function handleCollection() {
+    startRequestVersion.current += 1;
+    setTrackedCollection(collectionTarget);
+    setCollectionStarting(true);
     setError("");
     setCollectionProgressDismissed(false);
-    const collectionLabel = isTender ? "مناقصه‌ها" : selectedCategoryLabel;
     const toastId = notifyToast(
       "loading",
       "در حال ارسال درخواست جمع‌آوری " + collectionLabel + "...",
       { duration: 0 },
     );
     try {
-      const nextState = await startCollection(kind, auctionCategory, effectiveCollectionGroup);
-      setCollectionState(nextState);
+      const nextState = await startCollection(...collectionTarget);
+      setCollectionState((current) => ({
+        ...nextState,
+        last_updated_at: nextState.last_updated_at ?? current.last_updated_at,
+      }));
       notifyToast(
         "info",
         "درخواست جمع‌آوری " + collectionLabel + " ثبت شد؛ نتیجه پس از پایان اجرا اعلام می‌شود.",
@@ -1028,8 +831,11 @@ export default function Dashboard({ kind }) {
     } catch (requestError) {
       const message = requestError.response?.data?.detail ||
         ("شروع جمع‌آوری " + collectionLabel + " ناموفق بود.");
+      setTrackedCollection(null);
       setError(message);
       notifyToast("error", message, { id: toastId, duration: 6500 });
+    } finally {
+      setCollectionStarting(false);
     }
   }
 
@@ -1047,19 +853,34 @@ export default function Dashboard({ kind }) {
     }
   }
 
-  const exportParams = new URLSearchParams();
-  const exportValues = {
+  const exportParams = listingQueryParams({
     search,
-    ...appliedFilters,
-    matched_only: matchedOnly,
-    ...(!isTender ? { category: auctionCategory, collection_group: effectiveCollectionGroup } : {}),
+    ...filterParams,
+    ...(!isTender ? auctionScope : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
-  };
-  Object.entries(exportValues).forEach(([key, value]) => {
-    if (value !== "" && value !== undefined && value !== null) exportParams.set(key, String(value));
+    ...(isTender ? { prioritize_golestan: prioritizeGolestan } : {}),
   });
   const exportHref = "/api/" + kind + "/export.xlsx?" + exportParams.toString();
+  const selectedExportBody = selectedRows.length
+    ? { selected_ids: selectedRows.map(Number) }
+    : undefined;
+  const currentPageKeys = new Set((result.items || []).map((item) => String(item.id)));
+  const hasSelectionOutsidePage = selectedRows.some((key) => !currentPageKeys.has(String(key)));
+
+  function toggleSelectedRow(key, checked) {
+    setSelectedRows((current) => checked
+      ? current.includes(key) ? current : [...current, key]
+      : current.filter((value) => value !== key));
+  }
+
+  function togglePageSelection(keys, checked) {
+    setSelectedRows((current) => {
+      const pageKeys = new Set(keys);
+      const retained = current.filter((key) => !pageKeys.has(key));
+      return checked ? [...retained, ...keys.filter((key) => !current.includes(key))] : retained;
+    });
+  }
 
   return (
     <>
@@ -1078,26 +899,20 @@ export default function Dashboard({ kind }) {
                   <Info size={16} />
                 </span>
               </div>
-              <p>
-                {isTender
-                  ? "فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد"
-                  : isSharedClearance
-                    ? "آگهی‌های حراج از تابلوی مرکزی ستاد؛ منبع مشترک برای هر دو مجموعه"
-                    : "آگهی‌های " + selectedCategoryLabel + " از مجموعه " + (collectionGroup === "executive_agencies" ? "دستگاه‌های اجرایی" : "سازمان اموال تملیکی")}
-              </p>
+              {isTender && <p>فراخوان‌های مناقصه از زیرسامانه مستقل مناقصه‌های ستاد</p>}
             </div>
             <div className="page-heading__actions">
               <section className="collection-action-card" aria-label="عملیات داده">
                 <button
                   className="button button--primary collection-action-card__collect"
                   onClick={handleCollection}
-                  disabled={collectionRunning}
-                  aria-label={"جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}
+                  disabled={collectionRunning || collectionStarting}
+                  aria-label={isTender ? "جمع‌آوری مناقصه‌ها" : "جمع‌آوری داده"}
                 >
-                  {collectionRunning ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
-                  <span>{collectionRunning
+                  {collectionRunning || collectionStarting ? <LoaderCircle size={16} className="spin" /> : <Play size={16} />}
+                  <span>{collectionRunning || collectionStarting
                     ? "در حال اجرا..."
-                    : "جمع‌آوری " + (isTender ? "مناقصه‌ها" : selectedCategoryLabel)}</span>
+                    : isTender ? "جمع‌آوری مناقصه‌ها" : "جمع‌آوری داده"}</span>
                 </button>
                 <span
                   className="collection-action-card__last-updated"
@@ -1110,48 +925,12 @@ export default function Dashboard({ kind }) {
           </section>
 
           {!isTender && (
-            <section className="auction-source-selector" aria-label="انتخاب مجموعه یا منبع داده">
-              <div className="auction-source-selector__copy">
-                <strong>مجموعه آگهی</strong>
-                <small>منبع اصلی آگهی‌ها را انتخاب کن؛ حراج از تابلوی مرکزی و به‌صورت مشترک دریافت می‌شود.</small>
-              </div>
-              <div className="auction-source-selector__options" role="group" aria-label="مجموعه‌های مزایده">
-                {AUCTION_GROUPS.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={"auction-source-selector__option " + (collectionGroup === key ? "auction-source-selector__option--active" : "")}
-                    aria-pressed={collectionGroup === key}
-                    onClick={() => handleCollectionGroupChange(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </section>
-          )}
-          {!isTender && (
-            <nav className="auction-category-nav" aria-label="دسته‌بندی مزایده‌ها">
-              <div className="auction-category-nav__tabs" role="tablist" aria-label="نوع مزایده">
-                {availableCategories.map(({ key, label }) => (
-                  <button
-                    key={key}
-                    role="tab"
-                    type="button"
-                    className={"auction-category-nav__tab " + (auctionCategory === key ? "auction-category-nav__tab--active" : "")}
-                    aria-selected={auctionCategory === key}
-                    onClick={() => handleCategoryChange(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-            </nav>
-          )}
-          {isSharedClearance && (
-            <div className="auction-category-note">
-              این حراج از تابلوی مرکزی ستاد دریافت می‌شود و برای هر دو مجموعه مشترک است؛ اطلاعات آن فقط یک‌بار جمع‌آوری و ذخیره می‌شود.
-            </div>
+            <AuctionScopeFilters
+              collectionGroup={collectionGroup}
+              categories={selectedCategories}
+              onGroupChange={handleCollectionGroupChange}
+              onCategoryChange={handleCategoryChange}
+            />
           )}
           {!isCollectionProgressDismissed && (
             <CollectionProgress
@@ -1201,7 +980,7 @@ export default function Dashboard({ kind }) {
 
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
-            title={isTender ? "فهرست مناقصه‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
+            title={isTender ? "فهرست مناقصه‌ها" : !selectedCategories.length ? "فهرست همه مزایده‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
             tag="داده قابل فیلتر"
             columns={columns}
             items={result.items}
@@ -1213,6 +992,9 @@ export default function Dashboard({ kind }) {
             onPageChange={(nextPage) => loadPage(nextPage)}
             onPageSizeChange={(nextSize) => { setPage(1); setPageSize(nextSize); }}
             onDetails={openDetails}
+            selectedKeys={selectedRows}
+            onToggleSelection={toggleSelectedRow}
+            onTogglePageSelection={togglePageSelection}
             searchInput={searchInput}
             onSearchInput={setSearchInput}
             onSearch={handleSearch}
@@ -1225,25 +1007,39 @@ export default function Dashboard({ kind }) {
             sortDir={sortDir}
             onSort={handleSort}
             headerActions={
-              <ExcelExportButton
-                href={exportHref}
-                filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
-              />
+              <div className="table-export-actions">
+                {isTender && <button
+                  type="button"
+                  className={"table-priority-toggle" + (prioritizeGolestan ? " table-priority-toggle--active" : "")}
+                  aria-pressed={prioritizeGolestan}
+                  title="همهٔ استان‌ها در جدول باقی می‌مانند. این گزینه فقط ترتیب نمایش را تغییر می‌دهد."
+                  onClick={() => setPrioritizeGolestan((current) => !current)}
+                >
+                  <MapPin size={15} aria-hidden="true" />
+                  <span>گلستان در اولویت</span>
+                  <strong>{prioritizeGolestan ? "روشن" : "خاموش"}</strong>
+                </button>}
+                {isTender && prioritizeGolestan && <span className="table-priority-count">
+                  {formatNumber(result.golestan_count || 0)} آگهی گلستان در نتایج فعلی
+                </span>}
+                {selectedRows.length > 0 && <>
+                  <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
+                  {hasSelectionOutsidePage && <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>}
+                </>}
+                <ExcelExportButton
+                  href={exportHref}
+                  method={selectedExportBody ? "POST" : "GET"}
+                  body={selectedExportBody}
+                  label={selectedExportBody ? "خروجی اکسل انتخاب‌شده‌ها" : "خروجی Excel"}
+                  filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
+                />
+              </div>
             }
             advancedSearch={
               <FiltersPanel
                 kind={kind}
-                filters={filterDraft}
                 options={result.filter_options || {}}
-                onChange={handleFilterChange}
-                onApply={handleApplyFilters}
-                onReset={handleResetFilters}
-                isOpen={filtersOpen}
-                onToggle={() => setFiltersOpen((current) => !current)}
-                activeCount={activeFilterCount}
-                canReset={canResetFilters}
-                matchedOnly={matchedOnly}
-                onMatchedOnlyChange={(checked) => { setMatchedOnly(checked); setPage(1); }}
+                {...filterPanel}
               />
             }
           />

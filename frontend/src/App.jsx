@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import Dashboard from "./pages/Dashboard";
+import { defaultListing, listingTypes } from "./listingTypes";
+import QuickActions from "./pages/QuickActions";
 import Settings from "./pages/Settings";
 import ThemeTransition from "./components/ThemeTransition";
 import GlobalSearchPage from "./pages/GlobalSearchPage";
@@ -10,8 +11,9 @@ import { getApiHealth } from "./services/api";
 
 function resolvePage() {
   if (window.location.pathname.startsWith("/search")) return "search";
+  if (window.location.pathname === "/quick") return "quick";
   if (window.location.pathname.startsWith("/settings")) return "settings";
-  return window.location.pathname.startsWith("/tenders") ? "tenders" : "auctions";
+  return listingTypes.find(({ path }) => window.location.pathname.startsWith(path))?.page ?? defaultListing.page;
 }
 
 function initialTheme() {
@@ -35,6 +37,7 @@ function revealGeometry(event) {
 
 export default function App() {
   const [page, setPage] = useState(resolvePage);
+  const [locationSearch, setLocationSearch] = useState(window.location.search);
   const [routeVersion, setRouteVersion] = useState(0);
   const [theme, setTheme] = useState(initialTheme);
   const [themeTransition, setThemeTransition] = useState(null);
@@ -83,6 +86,7 @@ export default function App() {
       window.history.replaceState({}, "", "/auctions");
     }
     const handlePopState = () => {
+      setLocationSearch(window.location.search);
       setPage(resolvePage());
       setRouteVersion((current) => current + 1);
     };
@@ -92,8 +96,17 @@ export default function App() {
 
   function navigate(path) {
     if (window.location.pathname + window.location.search !== path) window.history.pushState({}, "", path);
+    setLocationSearch(window.location.search);
     setPage(resolvePage());
     setRouteVersion((current) => current + 1);
+  }
+
+  function updateTableQuery(query) {
+    const url = new URL(window.location.href);
+    if (query) url.searchParams.set("q", query);
+    else url.searchParams.delete("q");
+    window.history.replaceState(window.history.state, "", url);
+    setLocationSearch(url.search);
   }
 
   function onThemeToggle(event) {
@@ -122,8 +135,9 @@ export default function App() {
   }
 
   const onSidebarToggle = () => setSidebarCollapsed((current) => !current);
+  const { Page: ListingPage } = listingTypes.find((listing) => listing.page === page) ?? defaultListing;
   const initialQuery = page === "search"
-    ? new URLSearchParams(window.location.search).get("q") || ""
+    ? new URLSearchParams(locationSearch).get("q") || ""
     : "";
 
   return (
@@ -144,11 +158,12 @@ export default function App() {
             onNavigate={navigate}
             initialQuery={initialQuery}
           />
-          {page === "settings"
+          <QuickActions visible={page === "quick"} />
+          {page === "quick" ? null : page === "settings"
             ? <Settings key={routeVersion} theme={theme} onThemeToggle={onThemeToggle} />
             : page === "search"
-              ? <GlobalSearchPage key={routeVersion} />
-              : <Dashboard key={page} kind={page} />}
+              ? <GlobalSearchPage key={routeVersion} query={initialQuery} onQueryChange={updateTableQuery} />
+              : <ListingPage key={page} kind={page} />}
         </main>
       </div>
       {themeTransition && (

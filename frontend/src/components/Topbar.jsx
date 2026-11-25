@@ -2,10 +2,12 @@ import GlobalSearchBar from "./GlobalSearchBar";
 import GlobalCollectionControl from "./GlobalCollectionControl";
 import ThemeToggle from "./ThemeToggle";
 
+import { listingTypes } from "../listingTypes";
+
 const PAGE_TITLES = {
-  auctions: "مزایده‌ها",
-  tenders: "مناقصه‌ها",
-  search: "جست‌وجوی سراسری",
+  ...Object.fromEntries(listingTypes.map(({ page, title }) => [page, title])),
+  search: "همه آگهی‌ها",
+  quick: "گزارش‌های آماده",
   settings: "تنظیمات سایت",
 };
 

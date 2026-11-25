@@ -283,7 +283,7 @@ def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
             headers = [cell.value for cell in sheet[1]]
             assert "مجموعه" in headers
             group_column = headers.index("مجموعه") + 1
-            assert sheet.cell(row=2, column=group_column).value == "amval_tamliki"
+            assert sheet.cell(row=2, column=group_column).value == "سازمان اموال تملیکی"
         finally:
             db.execute(delete(Auction).where(Auction.source_party_id == source_id))
             db.commit()
@@ -528,4 +528,197 @@ def test_global_search_combines_auctions_and_tenders_with_server_side_filters(tm
             db.execute(
                 delete(Tender).where(Tender.source_tender_id == tender_source_id)
             )
+            db.commit()
+
+
+def test_combined_auction_selection_and_today_filter_match_excel(monkeypatch):
+    from datetime import datetime, timedelta
+    from io import BytesIO
+    from uuid import uuid4
+
+    from openpyxl import load_workbook
+
+    from app.services import listing_filters
+    from app.services.date_normalization import TEHRAN
+
+    midnight = datetime(2026, 11, 24, tzinfo=TEHRAN)
+
+    class FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return (midnight + timedelta(hours=1)).astimezone(tz)
+
+    monkeypatch.setattr(listing_filters, "datetime", FixedDateTime)
+    fixtures = [
+        ("movable", "executive_agencies", midnight),
+        ("immovable", "executive_agencies", midnight - timedelta(microseconds=1)),
+        ("rental", "executive_agencies", midnight + timedelta(days=1)),
+        ("clearance", "shared", midnight + timedelta(hours=4)),
+        ("movable", "amval_tamliki", midnight),
+    ]
+    ids = [f"uiux-selection-{index}" for index in range(len(fixtures))]
+    with SessionLocal() as db, TestClient(app) as client:
+        try:
+            db.add_all(
+                Auction(
+                    source_party_id=source_id, category=category, collection_group=group,
+                    title=source_id, publish_start_at=published, raw_payload={},
+                )
+                for source_id, (category, group, published) in zip(ids, fixtures)
+            )
+            db.commit()
+            params = {"search": "uiux-selection", "matched_only": False, "category": "all"}
+            combined = client.get("/api/auctions", params=params)
+            assert combined.status_code == 200, combined.text
+            assert combined.json()["total"] == 5
+
+            params.update(
+                categories=["movable", "clearance"], collection_group="executive_agencies", today_only=True,
+            )
+            page = client.get("/api/auctions", params=params)
+            assert page.status_code == 200, page.text
+            assert {item["source_party_id"] for item in page.json()["items"]} == {ids[0], ids[3]}
+
+            export_id = uuid4().hex
+            workbook = client.get("/api/auctions/export.xlsx", params={**params, "export_id": export_id})
+            assert workbook.status_code == 200, workbook.text
+            sheet = load_workbook(BytesIO(workbook.content)).active
+            assert {cell.value for cell in sheet["A"][1:]} == {ids[0], ids[3]}
+            assert client.get(f"/api/excel/progress/{export_id}").json() is None
+
+            params["collection_group"] = "all"
+            params.pop("categories")
+            page = client.get("/api/auctions", params=params)
+            assert {item["source_party_id"] for item in page.json()["items"]} == {ids[0], ids[3], ids[4]}
+        finally:
+            db.rollback()
+            db.execute(delete(Auction).where(Auction.source_party_id.in_(ids)))
+            db.commit()
+
+
+def test_global_advanced_tender_filters_match_excel():
+    from datetime import datetime
+    from io import BytesIO
+
+    from openpyxl import load_workbook
+
+    from app.db.models import Tender
+    from app.services.date_normalization import TEHRAN
+
+    notice = datetime(2026, 11, 24, 9, tzinfo=TEHRAN)
+    ids = ["uiux-tender-1", "uiux-tender-2"]
+    with SessionLocal() as db, TestClient(app) as client:
+        try:
+            db.add_all(
+                Tender(
+                    source_tender_id=source_id, title=source_id, city=city, province="تهران",
+                    state="PUBLISHED", type_name="عمومی", public_notification_at=notice,
+                    documents_deadline_at=notice, raw_payload={},
+                )
+                for source_id, city in zip(ids, ("ری", "تهران"))
+            )
+            db.commit()
+            params = {
+                "search": "uiux-tender", "province": "تهران", "city": "ری", "type_name": "عمومی",
+                "state": "PUBLISHED", "announcement_from": "2026-11-24", "documents_deadline_to": "2026-11-24",
+            }
+            page = client.get("/api/search", params=params)
+            assert page.status_code == 200, page.text
+            assert [item["record_number"] for item in page.json()["items"]] == ids[:1]
+            assert page.json()["summary"]["tenders"] == 1
+            assert {"province": "تهران", "city": "ری"} in page.json()["filter_options"]["cities"]
+
+            workbook = client.get("/api/search/export.xlsx", params=params)
+            assert workbook.status_code == 200, workbook.text
+            sheet = load_workbook(BytesIO(workbook.content)).active
+            assert [cell.value for cell in sheet["F"][1:]] == ids[:1]
+        finally:
+            db.rollback()
+            db.execute(delete(Tender).where(Tender.source_tender_id.in_(ids)))
+            db.commit()
+
+
+def test_partial_clearance_is_imported_without_marking_collection_successful(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app import main
+
+    payload = tmp_path / "clearance_page_0.json"
+    payload.write_text(json.dumps({"content": [{"cartId": 73998881, "title": "Partial clearance"}]}))
+    manifest = tmp_path / "clearance_partial_fixture.json"
+    manifest.write_text(json.dumps({
+        "category": "clearance",
+        "collection_group": "shared",
+        "complete_source": False,
+        "pages": [{"file": payload.name}],
+    }))
+    monkeypatch.setattr("app.auction_category_jobs.category_raw_dir", lambda *_: tmp_path)
+    monkeypatch.setattr(main.subprocess, "Popen", lambda *_, **__: SimpleNamespace(
+        stdout=[
+            'PROGRESS_JSON:{"pages_completed":1,"total_pages":10,"progress_percent":8}',
+            "PARTIAL_MANIFEST:" + manifest.name,
+            "FETCH FAILED: shared/clearance: HTTP 428",
+        ],
+        wait=lambda: 1,
+    ))
+    key = main.collection_state_key("shared", "clearance")
+    monkeypatch.setitem(main.collection_states, key, main.initial_collection_state("auctions", "shared", "clearance"))
+
+    with SessionLocal() as db:
+        original_runs = set(db.scalars(select(IngestionRun.id)).all())
+        try:
+            main.run_collection_job("auctions", "shared", "clearance")
+            state = main.collection_states[key]
+            assert state["status"] == "failed"
+            assert state["records_stored"] == 1
+            assert state["progress_percent"] == 8
+            assert "HTTP 428" in state["error"]
+            assert db.scalar(select(Auction.id).where(Auction.source_party_id == "73998881"))
+            run = db.scalar(select(IngestionRun).where(IngestionRun.id.not_in(original_runs)))
+            assert run.status == "failed"
+            assert run.stored == 1
+        finally:
+            db.execute(delete(Auction).where(Auction.source_party_id == "73998881"))
+            db.execute(delete(IngestionRun).where(IngestionRun.id.not_in(original_runs)))
+            db.commit()
+
+
+def test_registered_listing_type_appears_in_search_and_excel(monkeypatch):
+    from dataclasses import replace
+    from io import BytesIO
+    from openpyxl import load_workbook
+    from sqlalchemy import literal
+    from app.listing_types import LISTING_TYPES
+
+    auction = LISTING_TYPES["auction"]
+
+    def quote_rows():
+        query = auction.project()
+        _, *columns = query.selected_columns
+        return query.with_only_columns(
+            literal("quote").label("record_type"), *columns,
+        ).where(Auction.source_party_id == "quote-fixture")
+
+    monkeypatch.setitem(LISTING_TYPES, "quote", replace(
+        auction, label="استعلام بها", count_key="quotes", project=quote_rows,
+    ))
+    with SessionLocal() as db, TestClient(app) as client:
+        db.add(Auction(
+            source="setad_main_estate", source_party_id="quote-fixture",
+            collection_group="executive_agencies", category="movable",
+            title="Sample quote", raw_payload={}, matched_keywords=[],
+        ))
+        db.commit()
+        try:
+            response = client.get("/api/search", params={"kind": "quote"})
+            assert response.status_code == 200, response.text
+            body = response.json()
+            assert body["summary"]["quotes"] == body["archive_summary"]["quotes"] == 1
+            assert [item["record_type_label"] for item in body["items"]] == ["استعلام بها"]
+
+            response = client.get("/api/search/export.xlsx", params={"kind": "quote"})
+            assert response.status_code == 200, response.text
+            rows = list(load_workbook(BytesIO(response.content)).active.values)
+            assert [row[1] for row in rows[1:]] == ["استعلام بها"]
+        finally:
+            db.execute(delete(Auction).where(Auction.source_party_id == "quote-fixture"))
             db.commit()

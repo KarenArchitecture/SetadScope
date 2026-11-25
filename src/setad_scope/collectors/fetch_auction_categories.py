@@ -152,6 +152,10 @@ def validate_source_context(rows: list[dict], source) -> None:
         )
 
 
+class ClearancePreconditionError(RuntimeError):
+    pass
+
+
 def fetch_page(
     session: requests.Session,
     category: str,
@@ -165,6 +169,10 @@ def fetch_page(
     for attempt in range(1, 4):
         try:
             response = session.get(url, params=params, timeout=(20, 90))
+            if source.adapter == "centralboard" and response.status_code == 428:
+                raise ClearancePreconditionError(
+                    f"{source.collection_group}/{category}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر)"
+                )
             response.raise_for_status()
             payload = response.json()
             rows = extract_rows(payload, source.adapter)
@@ -313,9 +321,16 @@ def collect(
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"FETCH SUCCESS {group}/{category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
         return summary
-    except Exception:
-        # Partial pages remain available for diagnostics, but no successful
-        # manifest is written, so ingestion cannot mistake them for a snapshot.
+    except ClearancePreconditionError:
+        if page_summaries:
+            partial_path = raw_dir / f"{category}_partial_{stamp}.json"
+            partial_path.write_text(json.dumps({
+                "collection_group": group,
+                "category": category,
+                "complete_source": False,
+                "pages": page_summaries,
+            }, ensure_ascii=False), encoding="utf-8")
+            print("PARTIAL_MANIFEST:" + partial_path.name, flush=True)
         raise
 
 

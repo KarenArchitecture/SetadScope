@@ -35,8 +35,8 @@ export default function GlobalSearchBar({ onNavigate, initialQuery = "" }) {
         ref={inputRef}
         value={value}
         onChange={(event) => setValue(event.target.value)}
-        placeholder="جست‌وجو در تمام مزایده‌ها و مناقصه‌ها..."
-        aria-label="جست‌وجوی سراسری معاملات"
+        placeholder="جست‌وجو در همه آگهی‌ها..."
+        aria-label="جست‌وجو در همه آگهی‌ها"
         autoComplete="off"
       />
       {value && (

@@ -76,3 +76,9 @@ def test_configurable_keywords_without_changing_default_matching():
     assert "آلومینیوم" in matched_keywords("ضایعات آلومینیوم", keywords=("آلومینیوم",))
     assert "چوب" not in matched_keywords("فروش چوب", keywords=("آلومینیوم",))
     assert "چوب" in matched_keywords("فروش چوب")
+
+
+def test_export_dates_use_tehran_and_persian_digits():
+    from app.services.date_normalization import persian_timestamp
+    assert persian_timestamp("2026-11-24T15:30:00+00:00") == "۱۴۰۵/۰۹/۰۳  ۱۹:۰۰"
+    assert persian_timestamp("2026-11-24T22:30:00+00:00") == "۱۴۰۵/۰۹/۰۴  ۰۲:۰۰"

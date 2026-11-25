@@ -17,15 +17,15 @@ const topbar = read("src/components/Topbar.jsx");
 const globalCollection = read("src/components/GlobalCollectionControl.jsx");
 const sidebar = read("src/components/Sidebar.jsx");
 
-// One keyword-relevance control, on both auction/tender pages,
-// integrated into the advanced-search header rather than the category tabs.
-assert.equal((dashboard.match(/id="filter-matched-only"/g) || []).length, 1);
-assert.match(dashboard, /onMatchedOnlyChange=\{\(checked\) => \{ setMatchedOnly\(checked\); setPage\(1\); \}\}/);
-assert.match(dashboard, /activeFilterCount = [^;\n]+Number\(matchedOnly\)/);
-const resetStart = dashboard.indexOf("function handleResetFilters()");
-const resetEnd = dashboard.indexOf("function handleSort(", resetStart);
-assert.ok(resetStart > 0 && resetEnd > resetStart);
-assert.match(dashboard.slice(resetStart, resetEnd), /setMatchedOnly\(false\)/);
+// All three listings reuse the same quick filters and clear both on reset.
+const filters = read("src/components/FiltersPanel.jsx");
+const filterState = read("src/hooks/useListingFilters.js");
+assert.match(filters, /checked=\{matchedOnly\}/);
+assert.match(filters, /checked=\{todayOnly\}/);
+assert.match(filters, /فقط آگهی‌های مرتبط/);
+assert.match(filters, /فقط آگهی‌های امروز/);
+assert.match(filterState, /setMatchedOnly\(false\)/);
+assert.match(filterState, /setTodayOnly\(false\)/);
 assert.match(dashboard, /advancedSearch=\{\s*<FiltersPanel/);
 
 // The entire advanced-search panel is passed into the listing after
@@ -108,15 +108,14 @@ assert.match(api, /api\.get\("\/api\/search"/);
 assert.ok(api.includes('api.post("/api/collection/global/run")'));
 assert.ok(api.includes('api.get("/api/collection/global/status")'));
 assert.match(searchApi, /@router\.get\("\/api\/search"\)/);
-assert.match(searchApi, /union_all\(auction_query, tender_query\)/);
+assert.match(searchApi, /union_all\(\*projections\)/);
 assert.match(globalSearchPage, /kind === "all"/);
-assert.match(globalSearchPage, /kind === "auction"/);
-assert.match(globalSearchPage, /kind === "tender"/);
-assert.match(globalSearchPage, /getAuctionById/);
-assert.match(globalSearchPage, /getTenderById/);
+assert.match(globalSearchPage, /listingTypes\.map/);
+assert.match(globalSearchPage, /listing\.getDetails/);
 assert.match(listing, /key=\{item\.row_key \|\| item\.id\}/);
 assert.match(listing, /onDetails\(item\.id, item\)/);
-assert.match(globalSearchPage, /hideSearch/);
+assert.match(globalSearchPage, /onSearch=\{submitSearch\}/);
+assert.match(globalSearchPage, /advancedSearch=\{\s*<FiltersPanel/);
 
 console.log("Global search checks passed: all transaction types, navigation and details.");
 
@@ -158,7 +157,7 @@ assert.match(app, /<ToastViewport \/>/);
 assert.match(dashboard, /className="collection-action-card"/);
 assert.match(dashboard, /collection-action-card__last-updated/);
 assert.match(dashboard, /notifyToast\(\s*"loading"/);
-assert.match(dashboard, /notifyToast\(\s*"success"/);
+assert.match(dashboard, /notifyToast\(nextState\.status === "completed" \? "success" : "error"/);
 assert.match(dashboard, /notifyToast\(\s*"error"/);
 assert.match(toastViewport, /setadscope:toast/);
 assert.match(toastViewport, /aria-live="polite"/);

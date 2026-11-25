@@ -4,16 +4,16 @@
 
 ## 1. دستورات اصلی
 
-| عملیات | دستور |
-|---|---|
-| Build — ساخت Image | `docker compose build` |
-| Start — اجرای سرویس‌ها | `docker compose up -d` |
-| Stop — توقف بدون حذف کانتینر | `docker compose stop` |
-| Restart — راه‌اندازی مجدد | `docker compose restart` |
-| Rebuild + Restart | `docker compose up -d --build` |
-| Down — توقف و حذف کانتینرها | `docker compose down` |
-| Status — وضعیت سرویس‌ها | `docker compose ps` |
-| Logs — نمایش زنده لاگ‌ها | `docker compose logs -f` |
+| عملیات                       | دستور                          |
+| ---------------------------- | ------------------------------ |
+| Build — ساخت Image           | `docker compose build`         |
+| Start — اجرای سرویس‌ها       | `docker compose up -d`         |
+| Stop — توقف بدون حذف کانتینر | `docker compose stop`          |
+| Restart — راه‌اندازی مجدد    | `docker compose restart`       |
+| Rebuild + Restart            | `docker compose up -d --build` |
+| Down — توقف و حذف کانتینرها  | `docker compose down`          |
+| Status — وضعیت سرویس‌ها      | `docker compose ps`            |
+| Logs — نمایش زنده لاگ‌ها     | `docker compose logs -f`       |
 
 ## 2. آپدیت پروژه از GitHub
 
@@ -28,27 +28,27 @@ docker compose up -d --build
 
 ## 3. مدیریت سرویس‌های جداگانه
 
-| عملیات | دستور |
-|---|---|
-| Rebuild فرانت‌اند | `docker compose up -d --build frontend` |
-| Rebuild بک‌اند | `docker compose up -d --build api` |
-| Restart فرانت‌اند | `docker compose restart frontend` |
-| Restart بک‌اند | `docker compose restart api` |
-| مشاهده لاگ بک‌اند | `docker compose logs -f api` |
-| مشاهده لاگ فرانت‌اند | `docker compose logs -f frontend` |
-| مشاهده لاگ دیتابیس | `docker compose logs -f db` |
+| عملیات               | دستور                                   |
+| -------------------- | --------------------------------------- |
+| Rebuild فرانت‌اند    | `docker compose up -d --build frontend` |
+| Rebuild بک‌اند       | `docker compose up -d --build api`      |
+| Restart فرانت‌اند    | `docker compose restart frontend`       |
+| Restart بک‌اند       | `docker compose restart api`            |
+| مشاهده لاگ بک‌اند    | `docker compose logs -f api`            |
+| مشاهده لاگ فرانت‌اند | `docker compose logs -f frontend`       |
+| مشاهده لاگ دیتابیس   | `docker compose logs -f db`             |
 
 ## 4. دستورات پیشرفته‌تر
 
-| عملیات | دستور |
-|---|---|
-| Build بدون Cache | `docker compose build --no-cache` |
-| دریافت Base Imageهای جدید هنگام Build | `docker compose build --pull` |
-| ساخت مجدد اجباری کانتینرها | `docker compose up -d --force-recreate` |
-| اجرای کانتینرهای متوقف‌شده | `docker compose start` |
-| مشاهده مصرف منابع کانتینرها | `docker stats` |
-| مشاهده فضای اشغال‌شده توسط Docker | `docker system df` |
-| اجرای دستی Migration دیتابیس | `docker compose exec api alembic upgrade head` |
+| عملیات                                | دستور                                          |
+| ------------------------------------- | ---------------------------------------------- |
+| Build بدون Cache                      | `docker compose build --no-cache`              |
+| دریافت Base Imageهای جدید هنگام Build | `docker compose build --pull`                  |
+| ساخت مجدد اجباری کانتینرها            | `docker compose up -d --force-recreate`        |
+| اجرای کانتینرهای متوقف‌شده            | `docker compose start`                         |
+| مشاهده مصرف منابع کانتینرها           | `docker stats`                                 |
+| مشاهده فضای اشغال‌شده توسط Docker     | `docker system df`                             |
+| اجرای دستی Migration دیتابیس          | `docker compose exec api alembic upgrade head` |
 
 ## 5. تفاوت دستورات مهم
 

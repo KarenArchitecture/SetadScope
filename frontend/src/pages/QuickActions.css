@@ -1,0 +1,13 @@
+.quick-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(min(240px,100%),1fr)); gap:16px }
+.quick-card,.quick-actions dialog { font:inherit; color:var(--text-primary); background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:24px }
+.quick-card { cursor:pointer; display:grid; justify-items:center; gap:10px; text-align:center }
+.quick-card svg,.quick-actions progress { color:var(--accent); accent-color:var(--accent) }
+.quick-card:hover { border-color:var(--accent) }
+.quick-card span { font-size:12px; color:var(--text-muted) }
+.quick-actions dialog { margin:auto; width:min(440px,90vw); max-height:80vh; overflow:auto }
+.quick-actions dialog::backdrop { background:#0009 }
+.quick-actions progress { width:100% }
+.quick-close { float:inline-end; background:transparent; border:0; color:inherit; cursor:pointer }
+.quick-mini { position:fixed; left:18px; bottom:18px; z-index:90; padding:12px 18px; font:inherit; font-weight:700; cursor:pointer; border:1px solid var(--accent); color:var(--text-primary); background:var(--surface); border-radius:12px; box-shadow:0 3px 16px var(--shadow) }
+
+.quick-confirm-actions { display:flex; flex-wrap:wrap; gap:10px; justify-content:flex-end }

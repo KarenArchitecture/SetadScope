@@ -401,3 +401,29 @@ def test_eauc_rejects_wrong_reported_page_to_prevent_missing_data(tmp_path, monk
     with pytest.raises(RuntimeError, match="duplicate or missing pages"):
         collect("movable", raw_dir=root, session=Mock(), delay=0)
     assert not list(root.glob("movable_run_*.json"))
+
+
+def test_clearance_428_preserves_partial_pages_without_retrying(tmp_path, capsys):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    requested = []
+
+    class Session:
+        def get(self, url, params, timeout):
+            page = params["pageNumber"]
+            requested.append(page)
+            response = module.requests.Response()
+            response.status_code = 428 if page == 2 else 200
+            response._content = b'{"content":[{"cartId":1}],"totalPages":5,"totalElements":25}'
+            return response
+
+    with pytest.raises(module.ClearancePreconditionError, match="HTTP 428"):
+        module.collect("clearance", delay=0, raw_dir=tmp_path, session=Session())
+
+    assert requested == [0, 1, 2]
+    assert not list(tmp_path.glob("clearance_run_*.json"))
+    manifest, = tmp_path.glob("clearance_partial_*.json")
+    assert f"PARTIAL_MANIFEST:{manifest.name}" in capsys.readouterr().out
+    result = json.loads(manifest.read_text(encoding="utf-8"))
+    assert result["complete_source"] is False
+    assert [page["page"] for page in result["pages"]] == [0, 1]

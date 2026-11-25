@@ -6,6 +6,16 @@ const api = axios.create({
   timeout: 15000,
 });
 
+export function listingQueryParams(options) {
+  const params = new URLSearchParams();
+  for (const [key, value] of Object.entries(options)) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      if (item !== "" && item !== undefined && item !== null) params.append(key, item);
+    }
+  }
+  return params;
+}
+
 function listingParams(options = {}) {
   const {
     search = "",
@@ -23,9 +33,7 @@ function listingParams(options = {}) {
     page,
     page_size: pageSize,
   };
-  return Object.fromEntries(
-    Object.entries(params).filter(([, value]) => value !== "" && value !== undefined && value !== null),
-  );
+  return listingQueryParams(params);
 }
 
 export async function getAuctions(options = {}) {
@@ -62,6 +70,7 @@ export async function startCollection(
   kind,
   category = "movable",
   collectionGroup = "executive_agencies",
+  categories = [],
 ) {
   if (kind === "tenders") {
     const response = await api.post("/api/collection/tenders/run");
@@ -70,7 +79,7 @@ export async function startCollection(
   const response = await api.post(
     "/api/collection/auctions/" + category + "/run",
     null,
-    { params: { collection_group: collectionGroup } },
+    { params: listingQueryParams({ collection_group: collectionGroup, categories }) },
   );
   return response.data;
 }
@@ -79,6 +88,7 @@ export async function getCollectionStatus(
   kind,
   category = "movable",
   collectionGroup = "executive_agencies",
+  categories = [],
 ) {
   if (kind === "tenders") {
     const response = await api.get("/api/collection/tenders/status");
@@ -86,7 +96,7 @@ export async function getCollectionStatus(
   }
   const response = await api.get(
     "/api/collection/auctions/" + category + "/status",
-    { params: { collection_group: collectionGroup } },
+    { params: listingQueryParams({ collection_group: collectionGroup, categories }) },
   );
   return response.data;
 }
@@ -109,5 +119,12 @@ export async function getKeywords() {
 
 export async function updateKeywords(keywords) {
   const response = await api.put("/api/settings/keywords", { keywords });
+  return response.data;
+}
+
+export async function quickRequest(kind, action, startedAt) {
+  const url = "/api/quick/" + kind + "/" + action;
+  const response = action === "status" ? await api.get(url) :
+    await api.post(url, null, { params: { started_at: startedAt } });
   return response.data;
 }

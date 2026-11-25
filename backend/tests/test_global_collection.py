@@ -1,4 +1,5 @@
 from copy import deepcopy
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
@@ -24,6 +25,10 @@ def test_global_collection_runs_all_sources_sequentially_and_continues_after_fai
             for key, state in list(main.collection_states.items()):
                 if key == "global":
                     main.collection_states[key] = main.initial_global_collection_state()
+                elif state["kind"] == "auction_batch":
+                    main.collection_states[key] = main.initial_auction_batch_state(
+                        state["collection_group"], state["total_sources"],
+                    )
                 elif key == "tenders":
                     main.collection_states[key] = main.initial_collection_state("tenders")
                 else:
@@ -131,3 +136,159 @@ def test_global_collection_start_registers_background_job_and_reports_source_cou
         assert background_tasks.tasks[0].func is main.run_global_collection_job
     finally:
         _restore_states(previous_states)
+
+
+@pytest.mark.parametrize(
+    "group,expected_groups,categories,expected_categories",
+    [
+        ("executive_agencies", ("executive_agencies",), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("amval_tamliki", ("amval_tamliki",), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), [], ("movable", "immovable", "rental", "minor", "clearance")),
+        ("executive_agencies", ("executive_agencies",), ["immovable", "movable"], ("movable", "immovable")),
+        ("amval_tamliki", ("amval_tamliki",), ["clearance", "immovable"], ("immovable", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), ["clearance", "immovable", "immovable"], ("immovable", "clearance")),
+        ("all", ("executive_agencies", "amval_tamliki"), ["immovable"], ("immovable",)),
+    ],
+)
+def test_auction_batch_runs_selected_categories_in_order_and_reports_failures(
+    monkeypatch, group, expected_groups, categories, expected_categories,
+):
+    from fastapi.testclient import TestClient
+
+    class EmptyHistory:
+        def scalar(self, _query):
+            return None
+
+    previous_states = _snapshot_states()
+    monkeypatch.setitem(main.app.dependency_overrides, main.get_db, EmptyHistory)
+    calls = []
+    failure = (expected_groups[0], "immovable")
+    batch_key = main.auction_batch_key(group, categories)
+
+    def run_one(kind, collection_group, category):
+        assert kind == "auctions"
+        index = len(calls)
+        assert main.collection_states[batch_key]["completed_sources"] == index
+        calls.append((collection_group, category))
+        key = main.collection_state_key(collection_group, category)
+        main.update_collection_state(key, status="collecting", progress_percent=50)
+        batch = main.collection_states[batch_key]
+        assert batch["current_progress_percent"] == 50
+        assert batch["current_source_key"] == key
+        if (collection_group, category) == failure:
+            raise RuntimeError("immovable failed")
+        main.update_collection_state(key, status="completed", progress_percent=100)
+
+    monkeypatch.setattr(main, "run_collection_job", run_one)
+    try:
+        with TestClient(main.app) as client:
+            params = {"collection_group": group, "categories": categories}
+            initial = client.get("/api/collection/auctions/all/status", params=params)
+            assert initial.status_code == 200
+            assert initial.json()["status"] == "idle"
+            started = client.post("/api/collection/auctions/all/run", params=params)
+            assert started.status_code == 202, started.text
+            expected = [
+                (owner, category)
+                for category in expected_categories
+                if category != "clearance"
+                for owner in expected_groups
+            ]
+            if "clearance" in expected_categories:
+                expected.append(("shared", "clearance"))
+            assert calls == expected
+            assert started.json()["total_sources"] == len(expected)
+            status = client.get("/api/collection/auctions/all/status", params={
+                "collection_group": group,
+                "categories": sorted(set(categories)),
+            }).json()
+            assert status["status"] == "completed_with_errors"
+            assert status["overall_progress_percent"] == 100
+            assert status["successful_sources"] == len(expected) - 1
+            assert status["failed_sources"][0]["error"] == "immovable failed"
+            if categories:
+                unfiltered = client.get("/api/collection/auctions/all/status", params={"collection_group": group})
+                assert unfiltered.json()["status"] == "idle"
+    finally:
+        _restore_states(previous_states)
+
+
+def test_auction_batch_reservation_blocks_overlapping_work_before_first_source():
+    snapshot = _snapshot_states()
+    try:
+        pending = BackgroundTasks()
+        response = main.start_auction_batch(pending, "amval_tamliki")
+        assert response["status"] == "running"
+        assert response["total_sources"] == 5
+        assert len(pending.tasks) == 1
+
+        with pytest.raises(HTTPException) as duplicate:
+            main.start_auction_batch(BackgroundTasks(), "executive_agencies")
+        with pytest.raises(HTTPException) as global_request:
+            main.start_global_collection(BackgroundTasks())
+        with pytest.raises(HTTPException) as individual:
+            main.start_auction_category_collection(
+                "clearance", BackgroundTasks(), db=None, collection_group="shared",
+            )
+        assert duplicate.value.status_code == global_request.value.status_code == individual.value.status_code == 409
+    finally:
+        _restore_states(snapshot)
+
+
+def test_quick_stop_terminates_current_process_and_skips_remaining_sources(monkeypatch):
+    from unittest.mock import Mock
+    from fastapi import BackgroundTasks
+
+    snapshot = _snapshot_states()
+    calls = []
+    try:
+        tasks = BackgroundTasks()
+        job = main.start_quick("auctions", tasks, MagicMock())
+        def stop_during_first_source(kind, group, category):
+            key = main.collection_state_key(group, category)
+            process = Mock()
+            process.poll.return_value = None
+            monkeypatch.setitem(main.quick_processes, key, process)
+            main.stop_quick("auctions", job["started_at"])
+            process.terminate.assert_called_once()
+            calls.append(key)
+        monkeypatch.setattr(main, "run_collection_job", stop_during_first_source)
+        task, = tasks.tasks
+        task.func(*task.args)
+        assert len(calls) == 1
+        assert main.quick_status("auctions")["status"] == "cancelled"
+    finally:
+        _restore_states(snapshot)
+
+
+def test_quick_export_reuses_only_recent_success(monkeypatch):
+    snapshot = _snapshot_states()
+    try:
+        source = main.collection_states["tenders"]
+        now = main.datetime.now(main.timezone.utc)
+        source.update(status="completed", finished_at=now.isoformat())
+        tasks = BackgroundTasks()
+        result = main.start_quick("tenders", tasks, MagicMock())
+        assert result["status"] == "completed" and result["reused_sources"] == 1
+        assert not tasks.tasks
+        for status, age in [("failed", 0), ("completed", 16)]:
+            source.update(status=status, finished_at=(now - main.timedelta(minutes=age)).isoformat())
+            tasks = BackgroundTasks()
+            assert main.start_quick("tenders", tasks, MagicMock())["reused_sources"] == 0
+            assert len(tasks.tasks) == 1
+            main.collection_states["quick:tenders"]["status"] = "completed"
+    finally:
+        _restore_states(snapshot)
+
+
+def test_quick_reuses_import_after_restart(monkeypatch):
+    snapshot = _snapshot_states()
+    try:
+        main.collection_states["tenders"]["status"] = "idle"
+        tasks = BackgroundTasks()
+        db = MagicMock()
+        db.execute.return_value = [(None, None, "success", main.datetime.now(main.timezone.utc))]
+        assert main.start_quick("tenders", tasks, db)["reused_sources"] == 1
+        assert not tasks.tasks
+    finally:
+        _restore_states(snapshot)

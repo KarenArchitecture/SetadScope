@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Building2, Gavel, RotateCcw, Search as SearchIcon } from "lucide-react";
+import { Search as SearchIcon } from "lucide-react";
 import ListingTable from "../components/ListingTable";
 import ExcelExportButton from "../components/ExcelExportButton";
-import DeadlineStatusSelect from "../components/DeadlineStatusSelect";
+import FiltersPanel from "../components/FiltersPanel";
+import useListingFilters from "../hooks/useListingFilters";
 import { notifyToast } from "../utils/toast";
-import { DetailModal } from "./Dashboard";
-import { getAuctionById, getGlobalSearch, getTenderById } from "../services/api";
+import { defaultListing, listingByKey, listingTypes } from "../listingTypes";
+import { getGlobalSearch, listingQueryParams } from "../services/api";
 import "./Dashboard.css";
 import "../styles/redesign.css";
 import "./GlobalSearchPage.css";
@@ -48,25 +49,22 @@ function displayState(value) {
   return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
 }
 
-function TypeBadge({ kind }) {
+function TypeBadge({ kind, label }) {
+  const Icon = listingByKey[kind]?.badgeIcon;
   return (
     <span className={"global-result-type global-result-type--" + kind}>
-      {kind === "auction" ? <Gavel size={13} /> : <Building2 size={13} />}
-      {kind === "auction" ? "مزایده" : "مناقصه"}
+      {Icon && <Icon size={13} />}
+      {label || listingByKey[kind]?.label || kind}
     </span>
   );
 }
 
-export default function GlobalSearchPage() {
-  const initialQuery = new URLSearchParams(window.location.search).get("q") || "";
-  const [query] = useState(initialQuery);
+export default function GlobalSearchPage({ query, onQueryChange }) {
+  const [searchInput, setSearchInput] = useState(query);
   const [kind, setKind] = useState("all");
-  const [collectionGroup, setCollectionGroup] = useState("");
-  const [province, setProvince] = useState("");
-  const [status, setStatus] = useState("all");
-  const [matchedOnly, setMatchedOnly] = useState(false);
   const [sortBy, setSortBy] = useState("announcement_at");
   const [sortDir, setSortDir] = useState("desc");
+  const [selectedRows, setSelectedRows] = useState([]);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState({
@@ -79,8 +77,11 @@ export default function GlobalSearchPage() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const { params: filterParams, panel: filterPanel, resetFields } = useListingFilters(setError);
   const [selectedRecord, setSelectedRecord] = useState(null);
-  const [detailKind, setDetailKind] = useState("auctions");
+  const [detailType, setDetailType] = useState(defaultListing);
+  const { Details } = detailType;
+  const activeType = listingByKey[kind];
   const [detailLoading, setDetailLoading] = useState(false);
   const lastRequestId = useRef(0);
 
@@ -92,10 +93,7 @@ export default function GlobalSearchPage() {
       const data = await getGlobalSearch({
         search: query,
         kind,
-        collection_group: collectionGroup || "all",
-        province,
-        status,
-        matched_only: matchedOnly,
+        ...filterParams,
         sortBy,
         sortDir,
         page: nextPage,
@@ -113,7 +111,7 @@ export default function GlobalSearchPage() {
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
     }
-  }, [query, kind, collectionGroup, province, status, matchedOnly, sortBy, sortDir, pageSize]);
+  }, [query, kind, filterParams, sortBy, sortDir, pageSize]);
 
   useEffect(() => {
     loadPage(1);
@@ -140,11 +138,13 @@ export default function GlobalSearchPage() {
       label: "نوع معامله",
       sortable: true,
       sortKey: "record_type",
-      render: (item) => <TypeBadge kind={item.record_type} />,
+      render: (item) => <TypeBadge kind={item.record_type} label={item.record_type_label} />,
     },
     {
       key: "category_label",
-      label: "دسته",
+      label: "دسته / نوع فراخوان",
+      sortable: true,
+      sortKey: "category",
       render: (item) => item.category_label,
     },
     {
@@ -160,18 +160,8 @@ export default function GlobalSearchPage() {
       sortable: true,
       sortKey: "organization",
     },
-    {
-      key: "province",
-      label: "استان / شهر",
-      sortable: true,
-      sortKey: "province",
-      render: (item) => (
-        <div className="global-result-location">
-          <strong>{item.province || "—"}</strong>
-          <span>{item.city || "—"}</span>
-        </div>
-      ),
-    },
+    { key: "province", label: "استان", sortable: true, sortKey: "province" },
+    { key: "city", label: "شهر", sortable: true, sortKey: "city" },
     {
       key: "announcement_at",
       label: "تاریخ اعلام",
@@ -180,6 +170,14 @@ export default function GlobalSearchPage() {
       className: "date-cell",
       render: (item) => formatDate(item.announcement_at),
     },
+    ...((!activeType || activeType.showDocumentsDeadline) ? [{
+      key: "documents_deadline_at",
+      label: "مهلت اسناد",
+      sortable: true,
+      sortKey: "documents_deadline_at",
+      className: "date-cell",
+      render: (item) => formatDate(item.documents_deadline_at),
+    }] : []),
     {
       key: "deadline_at",
       label: "مهلت پیشنهاد",
@@ -205,22 +203,24 @@ export default function GlobalSearchPage() {
     {
       key: "state",
       label: "وضعیت",
+      sortable: true,
+      sortKey: "state",
       render: (item) => (
         <span className={"state-pill " + (item.state === "PUBLISHED" ? "state-pill--published" : "")}>
           {displayState(item.state)}
         </span>
       ),
     },
-  ], []);
+  ], [activeType]);
 
   async function openDetails(id, item) {
+    const listing = listingByKey[item.record_type];
+    if (!listing) return;
     setSelectedRecord(null);
-    setDetailKind(item.record_type === "tender" ? "tenders" : "auctions");
+    setDetailType(listing);
     setDetailLoading(true);
     try {
-      const record = item.record_type === "tender"
-        ? await getTenderById(id)
-        : await getAuctionById(id);
+      const record = await listing.getDetails(id);
       setSelectedRecord(record);
     } catch {
       setError("دریافت جزئیات این معامله ناموفق بود.");
@@ -230,10 +230,28 @@ export default function GlobalSearchPage() {
     }
   }
 
+  function submitSearch(event) {
+    event.preventDefault();
+    const term = searchInput.trim();
+    setSearchInput(term);
+    if (term === query) loadPage(1);
+    else onQueryChange(term);
+  }
+
+  function changeSearchInput(value) {
+    setSearchInput(value);
+    if (!value && query) onQueryChange("");
+  }
+
   function changeKind(nextKind) {
     if (kind === nextKind) return;
     setKind(nextKind);
-    if (nextKind === "tender") setCollectionGroup("");
+    const nextType = listingByKey[nextKind];
+    if (nextType?.excludedFilters?.length) resetFields(nextType.excludedFilters);
+    if (nextType && !nextType.showDocumentsDeadline && sortBy === "documents_deadline_at") {
+      setSortBy("announcement_at");
+      setSortDir("desc");
+    }
     setPage(1);
   }
 
@@ -247,43 +265,46 @@ export default function GlobalSearchPage() {
     setPage(1);
   }
 
-  function resetFilters() {
-    setCollectionGroup("");
-    setProvince("");
-    setStatus("all");
-    setMatchedOnly(false);
-    setPage(1);
-  }
-
   const summary = result.summary || { all: 0, auctions: 0, tenders: 0 };
   const archiveSummary = result.archive_summary || { all: 0, auctions: 0, tenders: 0 };
-  const options = result.filter_options || { collection_groups: [], provinces: [] };
-  const collectionOptions = (options.collection_groups || []).filter((item) => item.value !== "shared");
-  const canReset = Boolean(collectionGroup || province || status !== "all" || matchedOnly);
-
-  const exportParams = new URLSearchParams({
+  const exportParams = listingQueryParams({
     search: query,
     kind,
-    collection_group: collectionGroup || "all",
-    province,
-    status,
-    matched_only: String(matchedOnly),
+    ...filterParams,
     sort_by: sortBy,
     sort_dir: sortDir,
   });
   const exportHref = "/api/search/export.xlsx?" + exportParams.toString();
+  const selectedExportBody = selectedRows.length
+    ? { selected_records: selectedRows }
+    : undefined;
+  const currentPageKeys = new Set((result.items || []).map((item) => item.row_key));
+  const hasSelectionOutsidePage = selectedRows.some((key) => !currentPageKeys.has(key));
+
+  function toggleSelectedRow(key, checked) {
+    setSelectedRows((current) => checked
+      ? current.includes(key) ? current : [...current, key]
+      : current.filter((value) => value !== key));
+  }
+
+  function togglePageSelection(keys, checked) {
+    setSelectedRows((current) => {
+      const pageKeys = new Set(keys);
+      const retained = current.filter((key) => !pageKeys.has(key));
+      return checked ? [...retained, ...keys.filter((key) => !current.includes(key))] : retained;
+    });
+  }
 
   return (
     <>
       <div className="dashboard-content global-search-content" id="global-search">
           <section className="page-heading global-search-heading">
             <div>
-              <span className="eyebrow">جست‌وجو در تمام منابع داده</span>
-              <h1>جست‌وجوی سراسری معاملات</h1>
+              <h1>همه آگهی‌ها</h1>
               <p>
                 {query
-                  ? <>نتایج جست‌وجو برای <strong>«{query}»</strong> در مزایده‌ها و مناقصه‌ها</>
-                  : "جدیدترین معاملات ثبت‌شده در تمام منابع مزایده و مناقصه"}
+                  ? <>نتایج جست‌وجو برای <strong>«{query}»</strong> در آگهی‌های ثبت‌شده</>
+                  : "جدیدترین آگهی‌های ثبت‌شده در همه منابع"}
               </p>
             </div>
             <div className="global-search-total">
@@ -297,56 +318,16 @@ export default function GlobalSearchPage() {
             <button type="button" className={kind === "all" ? "is-active" : ""} onClick={() => changeKind("all")}>
               همه معاملات <span>{formatNumber(summary.all)}</span>
             </button>
-            <button type="button" className={kind === "auction" ? "is-active" : ""} onClick={() => changeKind("auction")}>
-              مزایده‌ها <span>{formatNumber(summary.auctions)}</span>
-            </button>
-            <button type="button" className={kind === "tender" ? "is-active" : ""} onClick={() => changeKind("tender")}>
-              مناقصه‌ها <span>{formatNumber(summary.tenders)}</span>
-            </button>
-          </section>
-
-          <section className="global-search-filterbar" aria-label="فیلتر نتایج جست‌وجو">
-            <label>
-              <span>مجموعه آگهی</span>
-              <select
-                value={collectionGroup}
-                disabled={kind === "tender"}
-                onChange={(event) => { setCollectionGroup(event.target.value); setPage(1); }}
-              >
-                <option value="">
-                  {kind === "tender" ? "برای مناقصه کاربرد ندارد" : "همه مجموعه‌ها"}
-                </option>
-                {collectionOptions.map((item) => (
-                  <option key={item.value} value={item.value}>{item.label}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>استان</span>
-              <select value={province} onChange={(event) => { setProvince(event.target.value); setPage(1); }}>
-                <option value="">همه استان‌ها</option>
-                {(options.provinces || []).map((item) => <option key={item} value={item}>{item}</option>)}
-              </select>
-            </label>
-            <label>
-              <span>وضعیت مهلت</span>
-              <DeadlineStatusSelect
-                value={status}
-                onChange={(value) => { setStatus(value); setPage(1); }}
-              />
-            </label>
-            <label className="global-search-match">
-              <input type="checkbox" checked={matchedOnly} onChange={(event) => { setMatchedOnly(event.target.checked); setPage(1); }} />
-              فقط آگهی‌های مرتبط
-            </label>
-            <button type="button" className="global-search-reset" onClick={resetFilters} disabled={!canReset}>
-              <RotateCcw size={14} /> پاک کردن فیلترها
-            </button>
+            {listingTypes.map(({ key, page, title }) => (
+              <button key={key} type="button" className={kind === key ? "is-active" : ""} onClick={() => changeKind(key)}>
+                {title} <span>{formatNumber(summary[page] ?? 0)}</span>
+              </button>
+            ))}
           </section>
 
           <ListingTable
             eyebrow="پایگاه یکپارچه معاملات"
-            title={kind === "auction" ? "تمام مزایده‌ها" : kind === "tender" ? "تمام مناقصه‌ها" : "تمام مزایده‌ها و مناقصه‌ها"}
+            title={activeType ? "تمام " + activeType.title : "فهرست همه آگهی‌ها"}
             tag="جست‌وجوی یکپارچه"
             columns={columns}
             items={result.items}
@@ -358,18 +339,42 @@ export default function GlobalSearchPage() {
             onPageChange={loadPage}
             onPageSizeChange={(nextSize) => { setPage(1); setPageSize(nextSize); }}
             onDetails={openDetails}
+            selectedKeys={selectedRows}
+            selectionKey={(item) => item.row_key}
+            onToggleSelection={toggleSelectedRow}
+            onTogglePageSelection={togglePageSelection}
             error={error}
             onRetry={() => loadPage(page)}
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={changeSort}
             headerActions={
-              <ExcelExportButton
-                href={exportHref}
-                filename="setadscope_global.xlsx"
+              <div className="table-export-actions">
+                {selectedRows.length > 0 && <>
+                  <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
+                  {hasSelectionOutsidePage && <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>}
+                </>}
+                <ExcelExportButton
+                  href={exportHref}
+                  method={selectedExportBody ? "POST" : "GET"}
+                  body={selectedExportBody}
+                  label={selectedExportBody ? "خروجی اکسل انتخاب‌شده‌ها" : "خروجی Excel"}
+                  filename="setadscope_global.xlsx"
+                />
+              </div>
+            }
+            advancedSearch={
+              <FiltersPanel
+                kind={activeType?.page ?? "all"}
+                options={result.filter_options || {}}
+                showCollection={activeType?.showCollection ?? true}
+                {...filterPanel}
               />
             }
-            hideSearch
+            searchInput={searchInput}
+            onSearchInput={changeSearchInput}
+            onSearch={submitSearch}
+            searchPlaceholder="جست‌وجو در عنوان، شرح، شماره یا سازمان آگهی..."
           />
 
           <footer className="dashboard-footer">
@@ -379,9 +384,9 @@ export default function GlobalSearchPage() {
       </div>
 
       {(selectedRecord || detailLoading) && (
-        <DetailModal
+        <Details
           record={selectedRecord}
-          kind={detailKind}
+          kind={detailType.page}
           loading={detailLoading}
           onClose={() => { setSelectedRecord(null); setDetailLoading(false); }}
         />
