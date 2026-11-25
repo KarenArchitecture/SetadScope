@@ -11,7 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
@@ -1245,6 +1245,7 @@ def get_auctions(
 
 
 @app.get("/api/auctions/export.xlsx")
+@app.post("/api/auctions/export.xlsx")
 def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
@@ -1264,15 +1265,20 @@ def export_auctions(
     price_max: Decimal | None = Query(None, ge=0),
     sort_by: str = Query("proposal_deadline"),
     sort_dir: Literal["asc", "desc"] = "asc",
+    selected_ids: list[int] | None = Body(default=None, embed=True),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    query = filtered_query(
-        status, search, province, city, state,
-        announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only, collection_group, categories, today_only,
+    query = (
+        select(Auction).where(Auction.id.in_(set(selected_ids)))
+        if selected_ids
+        else filtered_query(
+            status, search, province, city, state,
+            announcement_from, announcement_to, deadline_from, deadline_to,
+            price_min, price_max, category, matched_only, collection_group, categories, today_only,
+        )
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()

@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
@@ -235,6 +235,7 @@ def get_tenders(
 
 
 @router.get("/api/tenders/export.xlsx")
+@router.post("/api/tenders/export.xlsx")
 def export_tenders(
     search: str | None = None,
     matched_only: bool = False,
@@ -252,16 +253,21 @@ def export_tenders(
     documents_deadline_to: str | None = None,
     sort_by: str = Query("public_notification_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    selected_ids: list[int] | None = Body(default=None, embed=True),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    query = filtered_tender_query(
-        search, province, city, state, type_name,
-        announcement_from, announcement_to, deadline_from, deadline_to,
-        documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only, status=status, today_only=today_only,
+    query = (
+        select(Tender).where(Tender.id.in_(set(selected_ids)))
+        if selected_ids
+        else filtered_tender_query(
+            search, province, city, state, type_name,
+            announcement_from, announcement_to, deadline_from, deadline_to,
+            documents_deadline_from, documents_deadline_to,
+            matched_only=matched_only, status=status, today_only=today_only,
+        )
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()

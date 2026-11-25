@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select, union_all
 from sqlalchemy.orm import Session
 
@@ -276,6 +276,7 @@ def global_search(
 
 
 @router.get("/api/search/export.xlsx")
+@router.post("/api/search/export.xlsx")
 def export_global_search(
     search: str | None = None,
     kind: str = "all",
@@ -288,6 +289,7 @@ def export_global_search(
     collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    selected_records: list[str] | None = Body(default=None, embed=True),
     advanced: AdvancedSearchFilters = Depends(),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
@@ -302,12 +304,26 @@ def export_global_search(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    rows = _searchable_rows(
-        search, source, province, city, category, status, matched_only, collection_group,
-    )
-    query = select(rows).where(*advanced.conditions(rows))
-    if kind != "all":
-        query = query.where(rows.c.record_type == kind)
+    if selected_records:
+        rows = _searchable_rows(None, None, None, None, None, "all", False, "all")
+        conditions = []
+        for record in set(selected_records):
+            try:
+                record_type, raw_id = record.split(":", 1)
+                record_id = int(raw_id)
+            except (AttributeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid selected record") from exc
+            if record_type not in LISTING_TYPES:
+                raise HTTPException(status_code=422, detail="Unsupported selected record type")
+            conditions.append((rows.c.record_type == record_type) & (rows.c.record_id == record_id))
+        query = select(rows).where(or_(*conditions))
+    else:
+        rows = _searchable_rows(
+            search, source, province, city, category, status, matched_only, collection_group,
+        )
+        query = select(rows).where(*advanced.conditions(rows))
+        if kind != "all":
+            query = query.where(rows.c.record_type == kind)
 
     column = rows.c[SORT_COLUMNS[sort_by]]
     if sort_by == "category":

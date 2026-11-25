@@ -1,4 +1,5 @@
 import { ArrowDown, ArrowLeft, ArrowUp, ChevronLeft, ChevronRight, LoaderCircle, Search, X } from "lucide-react";
+import { useEffect, useRef } from "react";
 
 function formatNumber(value) {
   if (value === null || value === undefined || value === "") return "—";
@@ -30,9 +31,23 @@ export default function ListingTable({
   onSort,
   advancedSearch,
   headerActions,
+  selectedKeys = [],
+  selectionKey = (item) => String(item.id),
+  onToggleSelection,
+  onTogglePageSelection,
 }) {
   const from = total ? (page - 1) * pageSize + 1 : 0;
   const to = Math.min(page * pageSize, total);
+  const pageSelection = useRef(null);
+  const selectable = Boolean(onToggleSelection && onTogglePageSelection);
+  const pageKeys = items.map(selectionKey);
+  const selectedOnPage = pageKeys.filter((key) => selectedKeys.includes(key)).length;
+
+  useEffect(() => {
+    if (pageSelection.current) {
+      pageSelection.current.indeterminate = selectedOnPage > 0 && selectedOnPage < pageKeys.length;
+    }
+  }, [selectedOnPage, pageKeys.length]);
 
   return (
     <section className="data-panel">
@@ -83,6 +98,16 @@ export default function ListingTable({
         <table className="auction-table">
           <thead>
             <tr>
+              {selectable && <th className="table-selection-cell">
+                <input
+                  ref={pageSelection}
+                  type="checkbox"
+                  checked={pageKeys.length > 0 && selectedOnPage === pageKeys.length}
+                  disabled={pageKeys.length === 0}
+                  onChange={(event) => onTogglePageSelection(pageKeys, event.target.checked)}
+                  aria-label="انتخاب همهٔ ردیف‌های این صفحه"
+                />
+              </th>}
               {columns.map((column) => {
                 const active = sortBy === column.sortKey;
                 return (
@@ -111,18 +136,26 @@ export default function ListingTable({
           <tbody>
             {loading ? (
               <tr>
-                <td colSpan={columns.length + 1} className="table-message">
+                <td colSpan={columns.length + (selectable ? 2 : 1)} className="table-message">
                   <LoaderCircle className="spin" /> در حال دریافت اطلاعات...
                 </td>
               </tr>
             ) : items.length === 0 ? (
               <tr>
-                <td colSpan={columns.length + 1} className="table-message">
+                <td colSpan={columns.length + (selectable ? 2 : 1)} className="table-message">
                   رکوردی با این جست‌وجو و فیلترها پیدا نشد.
                 </td>
               </tr>
             ) : items.map((item) => (
-              <tr key={item.row_key || item.id}>
+              <tr key={item.row_key || item.id} className={selectable && selectedKeys.includes(selectionKey(item)) ? "table-row--selected" : ""}>
+                {selectable && <td className="table-selection-cell">
+                  <input
+                    type="checkbox"
+                    checked={selectedKeys.includes(selectionKey(item))}
+                    onChange={(event) => onToggleSelection(selectionKey(item), event.target.checked)}
+                    aria-label={"انتخاب آگهی " + (item.title || item.record_number || item.id)}
+                  />
+                </td>}
                 {columns.map((column) => (
                   <td key={column.key} className={column.className || ""}>
                     {column.render

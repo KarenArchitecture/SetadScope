@@ -14,6 +14,8 @@ export default function ExcelExportButton({
   onComplete,
   filename = "setadscope_export.xlsx",
   label = "خروجی Excel",
+  method = "GET",
+  body,
 }) {
   const [progress, setProgress] = useState({ status: "idle", percent: null, error: "" });
   const requestRef = useRef(null);
@@ -79,12 +81,13 @@ export default function ExcelExportButton({
       }
     }
 
-    request.open("GET", requestUrl);
+    request.open(method, requestUrl);
     request.responseType = "blob";
     request.setRequestHeader(
       "Accept",
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     );
+    if (body !== undefined) request.setRequestHeader("Content-Type", "application/json");
 
     request.onreadystatechange = () => {
       if (request.readyState === XMLHttpRequest.HEADERS_RECEIVED && request.status >= 200 && request.status < 300) {
@@ -163,7 +166,7 @@ export default function ExcelExportButton({
       requestRef.current = null;
     };
 
-    request.send();
+    request.send(body === undefined ? null : JSON.stringify(body));
     pollTimer = window.setTimeout(pollProgress, 250);
   }
 

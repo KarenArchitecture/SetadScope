@@ -463,7 +463,7 @@ export default function Dashboard({ kind }) {
   const pageTitle = isTender ? "پایش مناقصه‌ها" : "پایش مزایده‌ها";
   const [collectionGroup, setCollectionGroup] = useState("executive_agencies");
   // An empty selection is the «همه» view.
-  const [selectedCategories, setSelectedCategories] = useState(["movable"]);
+  const [selectedCategories, setSelectedCategories] = useState([]);
   const auctionCategory = selectedCategories.length === 1 ? selectedCategories[0] : null;
   const selectedCategoryLabel = CATEGORY_LABELS[auctionCategory] || (
     selectedCategories.length ? "انواع انتخاب‌شده" : "همه انواع"
@@ -490,6 +490,7 @@ export default function Dashboard({ kind }) {
     archive_stats: {},
     filter_options: {},
   });
+  const [selectedRows, setSelectedRows] = useState([]);
   const [searchInput, setSearchInput] = useState("");
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
@@ -858,6 +859,23 @@ export default function Dashboard({ kind }) {
     sort_dir: sortDir,
   });
   const exportHref = "/api/" + kind + "/export.xlsx?" + exportParams.toString();
+  const selectedExportBody = selectedRows.length
+    ? { selected_ids: selectedRows.map(Number) }
+    : undefined;
+
+  function toggleSelectedRow(key, checked) {
+    setSelectedRows((current) => checked
+      ? current.includes(key) ? current : [...current, key]
+      : current.filter((value) => value !== key));
+  }
+
+  function togglePageSelection(keys, checked) {
+    setSelectedRows((current) => {
+      const pageKeys = new Set(keys);
+      const retained = current.filter((key) => !pageKeys.has(key));
+      return checked ? [...retained, ...keys.filter((key) => !current.includes(key))] : retained;
+    });
+  }
 
   return (
     <>
@@ -969,6 +987,9 @@ export default function Dashboard({ kind }) {
             onPageChange={(nextPage) => loadPage(nextPage)}
             onPageSizeChange={(nextSize) => { setPage(1); setPageSize(nextSize); }}
             onDetails={openDetails}
+            selectedKeys={selectedRows}
+            onToggleSelection={toggleSelectedRow}
+            onTogglePageSelection={togglePageSelection}
             searchInput={searchInput}
             onSearchInput={setSearchInput}
             onSearch={handleSearch}
@@ -981,10 +1002,19 @@ export default function Dashboard({ kind }) {
             sortDir={sortDir}
             onSort={handleSort}
             headerActions={
-              <ExcelExportButton
-                href={exportHref}
-                filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
-              />
+              <div className="table-export-actions">
+                {selectedRows.length > 0 && <>
+                  <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
+                  <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن</button>
+                </>}
+                <ExcelExportButton
+                  href={exportHref}
+                  method={selectedExportBody ? "POST" : "GET"}
+                  body={selectedExportBody}
+                  label={selectedExportBody ? "خروجی اکسل انتخاب‌شده‌ها" : "خروجی Excel"}
+                  filename={isTender ? "setadscope_tenders.xlsx" : "setadscope_auctions.xlsx"}
+                />
+              </div>
             }
             advancedSearch={
               <FiltersPanel
