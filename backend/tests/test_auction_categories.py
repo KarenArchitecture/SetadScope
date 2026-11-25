@@ -162,6 +162,12 @@ def test_endpoints_and_zero_based_pagination():
             assert params["boardCode"] == "3"
 
 
+def test_shared_clearance_default_page_size_is_50():
+    from setad_scope.collectors.auction_sources.registry import source_for
+
+    assert source_for("clearance", "shared").default_rows == 50
+
+
 def test_pagination_totals_for_both_apis():
     assert page_totals({"total": 37, "records": 1095}, "movable", 30) == (37, 1095)
     assert page_totals({"totalPages": 44, "totalElements": 218}, "clearance", 5) == (44, 218)

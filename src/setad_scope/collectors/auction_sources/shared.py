@@ -13,7 +13,7 @@ SOURCES = {
         adapter="centralboard",
         base_url="https://gw.setadiran.ir",
         path="/api/centralboard/cards/",
-        default_rows=5,
+        default_rows=50,
         referer="https://fe.setadiran.ir/centralboard/",
         fixed_params=(
             ("tagCode", "341,343"),
