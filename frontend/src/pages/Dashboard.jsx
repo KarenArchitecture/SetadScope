@@ -495,6 +495,7 @@ export default function Dashboard({ kind }) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState(isTender ? "announcement_at" : "proposal_deadline");
   const [sortDir, setSortDir] = useState(isTender ? "desc" : "asc");
+  const [prioritizeGolestan, setPrioritizeGolestan] = useState(true);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -524,6 +525,7 @@ export default function Dashboard({ kind }) {
         ...(!isTender ? auctionScope : {}),
         sortBy,
         sortDir,
+        ...(isTender ? { prioritize_golestan: prioritizeGolestan } : {}),
         page: nextPage,
         pageSize,
       });
@@ -539,7 +541,7 @@ export default function Dashboard({ kind }) {
     } finally {
       if (requestId === lastRequestId.current) setLoading(false);
     }
-  }, [isTender, auctionScope, filterParams, search, sortBy, sortDir, pageSize]);
+  }, [isTender, auctionScope, filterParams, search, sortBy, sortDir, prioritizeGolestan, pageSize]);
 
   useEffect(() => {
     loadPage(1);
@@ -857,6 +859,7 @@ export default function Dashboard({ kind }) {
     ...(!isTender ? auctionScope : {}),
     sort_by: sortBy,
     sort_dir: sortDir,
+    ...(isTender ? { prioritize_golestan: prioritizeGolestan } : {}),
   });
   const exportHref = "/api/" + kind + "/export.xlsx?" + exportParams.toString();
   const selectedExportBody = selectedRows.length
@@ -1003,6 +1006,17 @@ export default function Dashboard({ kind }) {
             onSort={handleSort}
             headerActions={
               <div className="table-export-actions">
+                {isTender && <button
+                  type="button"
+                  className={"table-priority-toggle" + (prioritizeGolestan ? " table-priority-toggle--active" : "")}
+                  aria-pressed={prioritizeGolestan}
+                  title="همهٔ استان‌ها در جدول باقی می‌مانند. این گزینه فقط ترتیب نمایش را تغییر می‌دهد."
+                  onClick={() => setPrioritizeGolestan((current) => !current)}
+                >
+                  <MapPin size={15} aria-hidden="true" />
+                  <span>گلستان در اولویت</span>
+                  <strong>{prioritizeGolestan ? "روشن" : "خاموش"}</strong>
+                </button>}
                 {selectedRows.length > 0 && <>
                   <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
                   <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن</button>
