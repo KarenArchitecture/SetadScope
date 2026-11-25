@@ -1017,9 +1017,12 @@ export default function Dashboard({ kind }) {
                   <span>گلستان در اولویت</span>
                   <strong>{prioritizeGolestan ? "روشن" : "خاموش"}</strong>
                 </button>}
+                {isTender && prioritizeGolestan && <span className="table-priority-count">
+                  {formatNumber(result.golestan_count || 0)} آگهی گلستان در نتایج فعلی
+                </span>}
                 {selectedRows.length > 0 && <>
                   <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
-                  <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن</button>
+                  <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>
                 </>}
                 <ExcelExportButton
                   href={exportHref}

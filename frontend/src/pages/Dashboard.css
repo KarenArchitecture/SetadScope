@@ -1590,6 +1590,7 @@
 .table-priority-toggle:hover { border-color: var(--accent); }
 .table-priority-toggle--active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
 .table-priority-toggle strong { font-size: 10px; }
+.table-priority-count { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
 .table-selection-count { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
 .table-selection-clear { border: 0; padding: 4px; color: var(--accent); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
 .table-selection-clear:hover { text-decoration: underline; }

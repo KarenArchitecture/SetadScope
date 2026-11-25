@@ -104,8 +104,8 @@ export default function ListingTable({
                   type="checkbox"
                   checked={pageKeys.length > 0 && selectedOnPage === pageKeys.length}
                   disabled={pageKeys.length === 0}
-                  onChange={(event) => onTogglePageSelection(pageKeys, event.target.checked)}
-                  aria-label="انتخاب همهٔ ردیف‌های این صفحه"
+                  onChange={() => onTogglePageSelection(pageKeys, selectedOnPage === 0)}
+                  aria-label={selectedOnPage > 0 ? "لغو انتخاب ردیف‌های این صفحه" : "انتخاب همهٔ ردیف‌های این صفحه"}
                 />
               </th>}
               {columns.map((column) => {
