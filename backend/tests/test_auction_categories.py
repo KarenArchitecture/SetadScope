@@ -427,3 +427,6 @@ def test_clearance_428_preserves_partial_pages_without_retrying(tmp_path, capsys
     result = json.loads(manifest.read_text(encoding="utf-8"))
     assert result["complete_source"] is False
     assert [page["page"] for page in result["pages"]] == [0, 1]
+    assert result["error"]["status_code"] == 428
+    assert result["error"]["page_number"] == 2
+    assert result["error"]["body_preview"]
