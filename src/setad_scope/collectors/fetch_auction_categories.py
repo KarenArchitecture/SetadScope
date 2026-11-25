@@ -370,7 +370,7 @@ def collect(
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"FETCH SUCCESS {group}/{category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
         return summary
-    except ClearancePreconditionError:
+    except ClearancePreconditionError as exc:
         if page_summaries:
             partial_path = raw_dir / f"{category}_partial_{stamp}.json"
             partial_path.write_text(json.dumps({

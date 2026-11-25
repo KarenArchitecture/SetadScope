@@ -423,8 +423,12 @@ def test_clearance_428_preserves_partial_pages_without_retrying(tmp_path, capsys
             response._content = b'{"content":[{"cartId":1}],"totalPages":5,"totalElements":25}'
             return response
 
-    with pytest.raises(module.ClearancePreconditionError, match="HTTP 428"):
+    with pytest.raises(module.ClearancePreconditionError, match="HTTP 428") as error:
         module.collect("clearance", delay=0, raw_dir=tmp_path, session=Session())
+
+    assert error.value.diagnostic["status_code"] == 428
+    assert error.value.diagnostic["page_number"] == 2
+    assert "HTTP 428" in str(error.value)
 
     assert requested == [0, 1, 2]
     assert not list(tmp_path.glob("clearance_run_*.json"))
