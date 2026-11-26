@@ -24,15 +24,15 @@ AUCTION_CATEGORIES = {
     "immovable": "غیرمنقول",
     "rental": "اجاره",
     "minor": "جزئی",
-    "clearance": "حراج مشترک",
+    "clearance": "حراج",
 }
 SOURCE_LABELS = {
     "setad_main_estate": "سامانه مزایده ستاد · منقول",
     "setad_immovable": "سامانه مزایده ستاد · غیرمنقول",
     "setad_rental": "سامانه مزایده ستاد · اجاره",
     "setad_minor": "سامانه مزایده ستاد · جزئی",
-    "setad_clearance_5315": "سامانه حراج اموال تملیکی (قدیمی)",
-    "setad_clearance_shared": "سامانه حراج مشترک ستاد",
+    "setad_clearance_executive_agencies": "سامانه حراج دستگاه‌های اجرایی",
+    "setad_clearance_amval_tamliki": "سامانه حراج اموال تملیکی",
     "setad_tender": "سامانه مناقصات ستاد",
 }
 SORT_COLUMNS = {
@@ -141,7 +141,7 @@ def global_search(
     city: str | None = None,
     status: Literal["all", "active", "archive"] = "all",
     matched_only: bool = False,
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
@@ -224,12 +224,11 @@ def global_search(
         item["collection_group_label"] = {
             "executive_agencies": "دستگاه‌های اجرایی",
             "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
-            "shared": "حراج مشترک ستاد",
         }.get(item.get("collection_group"), "—")
         if item.get("collection_group") == "amval_tamliki":
             item["source_label"] = (
                 "سامانه حراج اموال تملیکی"
-                if item["source"] == "setad_clearance_5315"
+                if item["source"] == "setad_clearance_amval_tamliki"
                 else "سامانه مزایده اموال تملیکی"
             )
         else:
@@ -269,7 +268,6 @@ def global_search(
             "collection_groups": [
                 {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
                 {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
-                {"value": "shared", "label": "حراج مشترک ستاد"},
             ],
         },
     }
@@ -286,7 +284,7 @@ def export_global_search(
     city: str | None = None,
     status: Literal["all", "active", "archive"] = "all",
     matched_only: bool = False,
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
     selected_records: list[str] | None = Body(default=None, embed=True),
@@ -334,7 +332,6 @@ def export_global_search(
     group_labels = {
         "executive_agencies": "دستگاه‌های اجرایی",
         "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
-        "shared": "حراج مشترک ستاد",
     }
 
     headers = [
@@ -348,7 +345,7 @@ def export_global_search(
         for row in db.execute(query).mappings().yield_per(500):
             record_type = row["record_type"]
             source_label = SOURCE_LABELS.get(row["source"], row["source"])
-            if row.get("collection_group") == "amval_tamliki" and row["source"] == "setad_clearance_5315":
+            if row.get("collection_group") == "amval_tamliki" and row["source"] == "setad_clearance_amval_tamliki":
                 source_label = "سامانه حراج اموال تملیکی"
 
             announcement_at = row["announcement_at"]

@@ -41,13 +41,12 @@ const AUCTION_CATEGORIES = [
   { key: "immovable", label: "غیرمنقول" },
   { key: "rental", label: "اجاره" },
   { key: "minor", label: "جزئی" },
-  { key: "clearance", label: "حراج مشترک" },
+  { key: "clearance", label: "حراج" },
 ];
 const CATEGORY_LABELS = Object.fromEntries(AUCTION_CATEGORIES.map(({ key, label }) => [key, label]));
-const GROUP_LABELS = {
-  ...Object.fromEntries(AUCTION_GROUPS.map(({ key, label }) => [key, label])),
-  shared: "حراج مشترک",
-};
+const GROUP_LABELS = Object.fromEntries(
+  AUCTION_GROUPS.map(({ key, label }) => [key, label]),
+);
 const ACTIVE_STATES = new Set(["collecting", "importing", "running"]);
 function displayState(value) {
   return value === "PUBLISHED" ? "منتشر شده" : (value || "نامشخص");
@@ -293,9 +292,9 @@ function CollectionProgress({ state, kind, onDismiss }) {
 function AuctionScopeFilters({ collectionGroup, categories, onGroupChange, onCategoryChange }) {
   const allTypes = categories.length === 0;
   const hasClearance = allTypes || categories.includes("clearance");
-  const groupLabel = categories.length === 1 && hasClearance
-    ? GROUP_LABELS.shared
-    : collectionGroup === "all" ? "هر دو مجموعه" : GROUP_LABELS[collectionGroup];
+  const groupLabel = collectionGroup === "all"
+    ? "هر دو مجموعه"
+    : GROUP_LABELS[collectionGroup];
   const categoryLabel = allTypes ? "همه انواع" : categories.map((key) => CATEGORY_LABELS[key]).join("، ");
 
   return (
@@ -336,7 +335,7 @@ function AuctionScopeFilters({ collectionGroup, categories, onGroupChange, onCat
       </div>
       <footer className="auction-scope__footer">
         <span className="auction-scope__selection"><strong>نمای فعلی</strong> {groupLabel} · {categoryLabel}</span>
-        {hasClearance && <span><Info size={14} aria-hidden="true" /> حراج مشترک از تابلوی مرکزی ستاد دریافت می‌شود.</span>}
+        {hasClearance && <span><Info size={14} aria-hidden="true" /> حراج‌های دو مجموعه از دو منبع مستقل دریافت می‌شوند.</span>}
       </footer>
     </section>
   );
@@ -365,8 +364,7 @@ export function DetailModal({ record, kind, loading, onClose }) {
           ["مجموعه", ({
             executive_agencies: "دستگاه‌های اجرایی",
             amval_tamliki: "سازمان جمع‌آوری و فروش اموال تملیکی",
-            shared: "حراج مشترک ستاد",
-          })[record.collection_group] || "—"],
+           })[record.collection_group] || "—"],
           ["دسته مزایده", CATEGORY_LABELS[record.category] || "—"],
           ["شناسه منبع", record.source_party_id],
           ["شناسه مزایده", record.auction_id],
@@ -468,12 +466,17 @@ export default function Dashboard({ kind }) {
   const selectedCategoryLabel = CATEGORY_LABELS[auctionCategory] || (
     selectedCategories.length ? "انواع انتخاب‌شده" : "همه انواع"
   );
-  const isSharedClearance = !isTender && auctionCategory === "clearance";
-  const effectiveCollectionGroup = isSharedClearance ? "shared" : collectionGroup;
+  const effectiveCollectionGroup = collectionGroup;
   const isAuctionBatch = !isTender && (!auctionCategory || effectiveCollectionGroup === "all");
   const collectionCategory = isAuctionBatch ? "all" : auctionCategory;
   const batchCategories = isAuctionBatch ? selectedCategories : undefined;
-  const collectionLabel = isTender ? "مناقصه‌ها" : "مزایده‌ها";
+  const collectionLabel = isTender
+    ? "مناقصه‌ها"
+    : auctionCategory === "clearance"
+      ? collectionGroup === "all"
+        ? "حراج‌های هر دو مجموعه"
+        : "حراج " + GROUP_LABELS[collectionGroup]
+      : "مزایده‌ها";
   const collectionTarget = useMemo(() => (
     [kind, collectionCategory, effectiveCollectionGroup, batchCategories]
   ), [kind, collectionCategory, effectiveCollectionGroup, batchCategories]);
@@ -679,7 +682,7 @@ export default function Dashboard({ kind }) {
         key: "category", label: "نوع مزایده", sortable: true, sortKey: "category",
         render: (item) => CATEGORY_LABELS[item.category] || item.category,
       }] : []),
-      ...(collectionGroup === "all" && !isSharedClearance ? [{
+      ...(collectionGroup === "all" ? [{
         key: "collection_group", label: "مجموعه", sortable: true, sortKey: "collection_group",
         render: (item) => GROUP_LABELS[item.collection_group] || item.collection_group,
       }] : []),
@@ -752,7 +755,7 @@ export default function Dashboard({ kind }) {
         ),
       },
     ];
-  }, [isTender, auctionCategory, collectionGroup, isSharedClearance]);
+  }, [isTender, auctionCategory, collectionGroup]);
 
   function clearCollectionState() {
     if (collectionStarting || collectionRunning) return;
@@ -781,13 +784,13 @@ export default function Dashboard({ kind }) {
 
   function handleCollectionGroupChange(nextGroup) {
     if (nextGroup === collectionGroup) return;
-    if (!isSharedClearance) lastRequestId.current += 1;
+    lastRequestId.current += 1;
     setCollectionGroup(nextGroup);
     if (sortBy === "collection_group") {
       setSortBy("proposal_deadline");
       setSortDir("asc");
     }
-    if (!isSharedClearance) clearCollectionState();
+    clearCollectionState();
   }
 
   function handleSearch(event) {
@@ -980,7 +983,15 @@ export default function Dashboard({ kind }) {
 
           <ListingTable
             eyebrow="داده‌های استخراج‌شده"
-            title={isTender ? "فهرست مناقصه‌ها" : !selectedCategories.length ? "فهرست همه مزایده‌ها" : isSharedClearance ? "فهرست حراج‌های مشترک" : "فهرست مزایده‌های " + selectedCategoryLabel}
+            title={isTender
+              ? "فهرست مناقصه‌ها"
+              : !selectedCategories.length
+                ? "فهرست همه مزایده‌ها"
+                : auctionCategory === "clearance"
+                  ? collectionGroup === "all"
+                    ? "فهرست حراج‌های دو مجموعه"
+                    : "فهرست حراج " + GROUP_LABELS[collectionGroup]
+                  : "فهرست مزایده‌های " + selectedCategoryLabel}
             tag="داده قابل فیلتر"
             columns={columns}
             items={result.items}

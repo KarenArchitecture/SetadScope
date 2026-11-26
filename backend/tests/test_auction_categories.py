@@ -120,7 +120,7 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
         "tableId": 537644,
         "title": "حراج کتری برقی نام تجاری DEINI",
         "basePrice": 9000000,
-        "orgName": "سازمان جمع آوری و فروش اموال تملیکی",
+        "orgName": "اداره کل منابع طبیعی",
         "provinceName": "کرمان",
         "cityName": "کرمان",
         "categoryName": "لوازم خانگی، صوتی و تصویری",
@@ -131,8 +131,8 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
     row, status = project_auction(raw, "clearance")
     assert status == "unmatched"
     assert row["source_party_id"] == "4577196"
-    assert row["collection_group"] == "shared"
-    assert row["source"] == "setad_clearance_shared"
+    assert row["collection_group"] == "executive_agencies"
+    assert row["source"] == "setad_clearance_executive_agencies"
     assert row["auction_no"] == "3105001053005896"
     assert row["money_unit"] == "IRR"
     assert row["base_total_price"] == Decimal("9000000")
@@ -167,16 +167,17 @@ def test_pagination_totals_for_both_apis():
     assert page_totals({"totalPages": 44, "totalElements": 218}, "clearance", 5) == (44, 218)
 
 
-def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
+def test_group_registry_keeps_clearance_sources_independent():
     from setad_scope.collectors.auction_sources.registry import (
         CATEGORIES_BY_GROUP,
         resolve_collection_group,
+        source_for,
     )
 
-    expected_eauc = ("movable", "immovable", "rental", "minor")
-    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_eauc
-    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc
-    assert CATEGORIES_BY_GROUP["shared"] == ("clearance",)
+    expected_categories = ("movable", "immovable", "rental", "minor", "clearance")
+    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_categories
+    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_categories
+    assert set(CATEGORIES_BY_GROUP) == {"executive_agencies", "amval_tamliki"}
 
     for group in ("executive_agencies", "amval_tamliki"):
         for category, endpoint in {
@@ -190,16 +191,64 @@ def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
             assert params["page"] == 0
             assert params["rows"] == 30
 
-    clearance_url, clearance_params = request_details("clearance", 0, 5, "shared")
-    assert "/api/centralboard/cards/" in clearance_url
-    assert clearance_params["tagCode"] == "341,343"
-    assert "selectedOrganization" not in clearance_params
-    assert resolve_collection_group("clearance") == "shared"
-    with pytest.raises(ValueError, match="not configured"):
-        resolve_collection_group("clearance", "executive_agencies")
-    with pytest.raises(ValueError, match="not configured"):
-        resolve_collection_group("clearance", "amval_tamliki")
+    executive_url, executive_params = request_details("clearance", 0, 5, "executive_agencies")
+    assert "/api/centralboard/cards/" in executive_url
+    assert executive_params["tagCode"] == "341,343"
+    assert "selectedOrganization" not in executive_params
 
+    amval_url, amval_params = request_details("clearance", 0, 5, "amval_tamliki")
+    assert "/api/centralboard/cards/" in amval_url
+    assert amval_params["tagCode"] == "342"
+    assert amval_params["selectedOrganization"] == "5315"
+    assert amval_params["pageNumber"] == 0
+    assert amval_params["pageSize"] == 5
+    assert amval_params["sort"] == "score,desc"
+    assert source_for("clearance", "amval_tamliki").default_rows == 5
+
+    assert resolve_collection_group("clearance") == "executive_agencies"
+    assert resolve_collection_group("clearance", "executive_agencies") == "executive_agencies"
+    assert resolve_collection_group("clearance", "amval_tamliki") == "amval_tamliki"
+    with pytest.raises(ValueError, match="Unknown collection group"):
+        resolve_collection_group("clearance", "shared")
+
+
+def test_amval_centralboard_clearance_validates_organization_identity():
+    from setad_scope.collectors.auction_sources.registry import source_for
+    from setad_scope.collectors.fetch_auction_categories import (
+        SourceContextMismatch,
+        validate_source_context,
+    )
+
+    raw = {
+        "cartId": 4618589,
+        "ticketId": "92816610-1b59-4234-a76f-f5c8d96afa31",
+        "number": 3105001053006339,
+        "title": "حراج خودرو GAC spio LNAA3AA18P5693879 مدل -سفید اتومات 2023",
+        "basePrice": 12500000000,
+        "orgName": "سازمان جمع آوری و فروش اموال تملیکی",
+        "orgId": 5315,
+        "tagCode": 342,
+        "provinceName": "تهران",
+        "cityName": "تهران",
+        "jalaliSendDeadlineDate": "1405/09/08 - 19:00",
+        "jalaliFromProposalDate": "1405/09/08 - 08:00",
+    }
+    item, _ = project_auction(raw, "clearance", collection_group="amval_tamliki")
+    source = source_for("clearance", "amval_tamliki")
+
+    assert item["collection_group"] == "amval_tamliki"
+    assert item["source"] == "setad_clearance_amval_tamliki"
+    assert item["source_party_id"] == "4618589"
+    assert "selectedOrganization=5315" in item["source_url"]
+    validate_source_context([raw], source)
+
+    wrong_owner = {**raw, "orgId": 1234}
+    with pytest.raises(SourceContextMismatch, match="expected orgId=5315"):
+        validate_source_context([wrong_owner], source)
+
+    missing_owner = {key: value for key, value in raw.items() if key != "orgId"}
+    with pytest.raises(SourceContextMismatch, match="orgId is missing"):
+        validate_source_context([missing_owner], source)
 
 def test_project_auction_records_the_explicit_collection_group():
     raw = {

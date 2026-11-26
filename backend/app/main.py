@@ -83,14 +83,13 @@ collection_lock = threading.Lock()
 COLLECTION_GROUP_LABELS = {
     "executive_agencies": "دستگاه‌های اجرایی",
     "amval_tamliki": "سازمان اموال تملیکی",
-    "shared": "تابلوی مشترک ستاد",
 }
 AUCTION_CATEGORY_LABELS = {
     "movable": "منقول",
     "immovable": "غیرمنقول",
     "rental": "اجاره",
     "minor": "جزئی",
-    "clearance": "حراج مشترک",
+    "clearance": "حراج",
 }
 GLOBAL_COLLECTION_SOURCES = tuple(
     {
@@ -98,10 +97,8 @@ GLOBAL_COLLECTION_SOURCES = tuple(
         "collection_group": group,
         "category": category,
         "label": (
-            "حراج مشترک ستاد"
-            if group == "shared"
-            else f"{AUCTION_CATEGORY_LABELS.get(category, category)} — "
-                 f"{COLLECTION_GROUP_LABELS.get(group, group)}"
+            f"{AUCTION_CATEGORY_LABELS.get(category, category)} — "
+            f"{COLLECTION_GROUP_LABELS.get(group, group)}"
         ),
     }
     for group, categories in AUCTION_CATEGORIES_BY_GROUP.items()
@@ -137,7 +134,7 @@ def auction_batch_sources(
         if not categories or category in categories
         for source in GLOBAL_COLLECTION_SOURCES
         if source["category"] == category
-        and (group == "all" or source["collection_group"] in (group, "shared"))
+        and (group == "all" or source["collection_group"] == group)
     )
 
 
@@ -371,7 +368,7 @@ def run_collection_job(
         output = "\n".join(output_lines)[-5000:]
         incomplete = return_code != 0
         reason = failure_message or f"{state_key} collector exited with code {return_code}"
-        if incomplete and not (kind == "auctions" and group == "shared" and category == "clearance" and partial_manifest):
+        if incomplete and not (kind == "auctions" and category == "clearance" and partial_manifest):
             raise RuntimeError(failure_message or output or reason)
 
         with collection_lock:
@@ -735,12 +732,7 @@ def _auction_group_scope(
     if category == "all" or categories:
         conditions = [Auction.category.in_(categories)] if categories else []
         if collection_group in ("executive_agencies", "amval_tamliki"):
-            conditions.append(
-                or_(
-                    Auction.collection_group == collection_group,
-                    (Auction.collection_group == "shared") & (Auction.category == "clearance"),
-                )
-            )
+            conditions.append(Auction.collection_group == collection_group)
         elif collection_group != "all":
             conditions.append(Auction.collection_group == collection_group)
         return conditions
@@ -819,7 +811,6 @@ def auction_filter_options(
         "collection_groups": [
             {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
             {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
-            {"value": "shared", "label": "حراج مشترک ستاد"},
         ],
     }
 
@@ -1081,12 +1072,12 @@ def start_auction_batch(
     return response
 
 
-# Existing route shapes remain available. Pass collection_group to select a
-# source group; clearance defaults to the shared Central Board feed.
+# Clearance is a category available in both owning collections. It defaults
+# to executive_agencies; pass amval_tamliki for the separately scoped feed.
 @app.get("/api/collection/auctions/{category}/status")
 def get_auction_category_status(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
-    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
     db: Session = Depends(get_db),
 ):
     try:
@@ -1102,7 +1093,7 @@ def start_auction_category_collection(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
 ):
     try:
         group = resolve_collection_group(category, collection_group)
@@ -1135,7 +1126,7 @@ def start_auction_category_collection(
 
 @app.get("/api/collection/auctions/history")
 def get_auction_collection_history(
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -1198,7 +1189,7 @@ def get_auctions(
     search: str | None = None,
     category: AuctionCategory | Literal["all"] = "movable",
     categories: list[AuctionCategory] | None = Query(None),
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     today_only: bool = False,
     status: Literal["active", "archive", "all"] = "all",
@@ -1251,7 +1242,7 @@ def export_auctions(
     search: str | None = None,
     category: AuctionCategory | Literal["all"] = "movable",
     categories: list[AuctionCategory] | None = Query(None),
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     today_only: bool = False,
     province: str | None = None,

@@ -63,7 +63,7 @@ ROWS = {
     "clearance": {
         "cartId": 73000005, "tableId": 9500, "number": 3105001053005896,
         "title": "حراج کتری برقی", "basePrice": 9000000,
-        "orgName": "سازمان جمع آوری و فروش اموال تملیکی",
+        "orgName": "اداره کل منابع طبیعی",
         "provinceName": "کرمان", "cityName": "کرمان",
         "jalaliSendDeadlineDate": "1405/09/01 - 19:00",
         "jalaliFromProposalDate": "1405/09/01 - 08:00",
@@ -88,17 +88,17 @@ def test_legacy_keyword_matched_auction_survives_0005_migration():
         assert legacy.first_seen_at is not None
 
 
-def test_legacy_clearance_source_is_migrated_to_shared_scope():
+def test_legacy_clearance_source_is_restored_to_amval_scope():
     with SessionLocal() as db:
         legacy = db.scalar(
             select(Auction).where(
-                Auction.source == "setad_clearance_shared",
+                Auction.source == "setad_clearance_amval_tamliki",
                 Auction.source_party_id == "pre-migration-clearance",
             )
         )
         assert legacy is not None, "Legacy Amval Tamliki clearance row was lost"
         assert legacy.category == "clearance"
-        assert legacy.collection_group == "shared"
+        assert legacy.collection_group == "amval_tamliki"
 
 
 def test_all_category_imports_idempotence_and_http_filters(tmp_path):
@@ -136,7 +136,7 @@ def test_all_category_imports_idempotence_and_http_filters(tmp_path):
                 assert body["total"] >= 1
                 assert all(item["category"] == category for item in body["items"])
 
-                collection_group = "shared" if category == "clearance" else "executive_agencies"
+                collection_group = "executive_agencies"
                 collection_status = client.get(f"/api/collection/auctions/{category}/status")
                 assert collection_status.status_code == 200
                 assert collection_status.json()["collection_group"] == collection_group
@@ -248,7 +248,7 @@ def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
 
             invalid_group_filter = client.get(
                 "/api/auctions",
-                params={"category": "clearance", "collection_group": "executive_agencies"},
+                params={"category": "clearance", "collection_group": "shared"},
             )
             assert invalid_group_filter.status_code == 422
             invalid_search_filter = client.get(
@@ -256,7 +256,7 @@ def test_same_source_identity_is_isolated_between_collection_groups(tmp_path):
                 params={
                     "kind": "auction",
                     "category": "clearance",
-                    "collection_group": "executive_agencies",
+                    "collection_group": "shared",
                 },
             )
             assert invalid_search_filter.status_code == 422
@@ -553,7 +553,7 @@ def test_combined_auction_selection_and_today_filter_match_excel(monkeypatch):
         ("movable", "executive_agencies", midnight),
         ("immovable", "executive_agencies", midnight - timedelta(microseconds=1)),
         ("rental", "executive_agencies", midnight + timedelta(days=1)),
-        ("clearance", "shared", midnight + timedelta(hours=4)),
+        ("clearance", "executive_agencies", midnight + timedelta(hours=4))
         ("movable", "amval_tamliki", midnight),
     ]
     ids = [f"uiux-selection-{index}" for index in range(len(fixtures))]
@@ -647,7 +647,7 @@ def test_partial_clearance_is_imported_without_marking_collection_successful(tmp
     manifest = tmp_path / "clearance_partial_fixture.json"
     manifest.write_text(json.dumps({
         "category": "clearance",
-        "collection_group": "shared",
+        "collection_group": "executive_agencies",
         "complete_source": False,
         "pages": [{"file": payload.name}],
     }))
@@ -656,17 +656,17 @@ def test_partial_clearance_is_imported_without_marking_collection_successful(tmp
         stdout=[
             'PROGRESS_JSON:{"pages_completed":1,"total_pages":10,"progress_percent":8}',
             "PARTIAL_MANIFEST:" + manifest.name,
-            "FETCH FAILED: shared/clearance: HTTP 428",
+            "FETCH FAILED: executive_agencies/clearance: HTTP 428",
         ],
         wait=lambda: 1,
     ))
-    key = main.collection_state_key("shared", "clearance")
-    monkeypatch.setitem(main.collection_states, key, main.initial_collection_state("auctions", "shared", "clearance"))
+    key = main.collection_state_key("executive_agencies", "clearance")
+    monkeypatch.setitem(main.collection_states, key, main.initial_collection_state("auctions", "executive_agencies", "clearance"))
 
     with SessionLocal() as db:
         original_runs = set(db.scalars(select(IngestionRun.id)).all())
         try:
-            main.run_collection_job("auctions", "shared", "clearance")
+            main.run_collection_job("auctions", "executive_agencies", "clearance")
             state = main.collection_states[key]
             assert state["status"] == "failed"
             assert state["records_stored"] == 1
