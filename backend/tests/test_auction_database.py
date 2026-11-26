@@ -553,7 +553,7 @@ def test_combined_auction_selection_and_today_filter_match_excel(monkeypatch):
         ("movable", "executive_agencies", midnight),
         ("immovable", "executive_agencies", midnight - timedelta(microseconds=1)),
         ("rental", "executive_agencies", midnight + timedelta(days=1)),
-        ("clearance", "executive_agencies", midnight + timedelta(hours=4))
+        ("clearance", "executive_agencies", midnight + timedelta(hours=4)),
         ("movable", "amval_tamliki", midnight),
     ]
     ids = [f"uiux-selection-{index}" for index in range(len(fixtures))]
