@@ -23,6 +23,7 @@ import {
   startCollection,
 } from "../services/api";
 import ListingTable from "../components/ListingTable";
+import CollectionWait from "../components/CollectionWait";
 import ExcelExportButton from "../components/ExcelExportButton";
 import FiltersPanel from "../components/FiltersPanel";
 import useListingFilters from "../hooks/useListingFilters";
@@ -179,13 +180,14 @@ function CollectionProgress({ state, kind, onDismiss }) {
   const percent = Math.max(0, Math.min(100, Number(
     (isBatch ? state.overall_progress_percent : state.progress_percent) || 0,
   )));
-  const statusLabel = {
+  const waiting = active && (isBatch ? state.current_phase : state.phase) === "waiting_for_access";
+  const statusLabel = waiting ? "در انتظار دریافت سری بعدی اطلاعات" : ({
     completed: "با موفقیت تکمیل شد",
     completed_with_errors: "جمع‌آوری با خطا پایان یافت",
     failed: "اجرای ناموفق",
     importing: "در حال ذخیره در پایگاه داده",
     running: "در حال جمع‌آوری مزایده‌ها",
-  }[state.status] || "در حال دریافت از سامانه ستاد";
+  }[state.status] || "در حال دریافت از سامانه ستاد");
   const panelLabel = kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
 
   return (
@@ -228,8 +230,9 @@ function CollectionProgress({ state, kind, onDismiss }) {
             {" · "}{state.current_source_label} ({formatNumber(state.current_progress_percent)}٪)
             {state.current_phase === "importing" && " · در حال ذخیره"}
           </>
-        ) : state.message}
+        ) : waiting ? "دریافت اطلاعات به‌صورت مرحله‌ای ادامه دارد." : state.message}
       </p>
+      <CollectionWait state={state} />
       <div className="collection-progress__metrics">
         {isBatch ? (
           <>

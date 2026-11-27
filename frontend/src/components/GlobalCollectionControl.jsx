@@ -6,6 +6,7 @@ import {
   startGlobalCollection,
 } from "../services/api";
 import { notifyToast } from "../utils/toast";
+import CollectionWait from "./CollectionWait";
 import "./GlobalCollectionControl.css";
 
 function formatNumber(value) {
@@ -192,6 +193,7 @@ export default function GlobalCollectionControl({ apiOnline }) {
             <p className="global-collection-control__message">
               {isRunning ? state.current_message || state.message : state.message}
             </p>
+            <CollectionWait state={state} />
 
             <div className="global-collection-control__status-footer">
               <span>

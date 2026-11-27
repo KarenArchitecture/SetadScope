@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
+from uuid import uuid4
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
@@ -255,7 +257,7 @@ def _fetch_for_group(session, category: str, page: int, rows: int, collection_gr
 
 
 
-CENTRALBOARD_RETRY_INITIAL_SECONDS = 30.0
+CENTRALBOARD_RETRY_INITIAL_SECONDS = 240.0
 CENTRALBOARD_RETRY_MAX_SECONDS = 300.0
 CENTRALBOARD_CHECKPOINT_VERSION = 1
 
@@ -349,6 +351,22 @@ def _fetch_centralboard_page_with_wait(
     retry_max_seconds: float,
 ) -> dict:
     retry_count = int(checkpoint.get("retry_count", 0) or 0)
+    # Preserve a pending cooldown even if the backend was restarted.
+    if checkpoint.get("status") == "waiting" and checkpoint.get("waiting_page") == page:
+        remaining = max(0.0, float(checkpoint.get("retry_at") or 0) - time.time())
+        if remaining:
+            emit_progress(
+                collection_group=collection_group, category=category,
+                phase="waiting_for_access", current_page=len(page_summaries),
+                total_pages=total_pages, pages_completed=len(page_summaries),
+                records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
+                records_total=total_records,
+                progress_percent=int(85 * len(page_summaries) / max(int(total_pages or 1), 1)),
+                retry_at=checkpoint["retry_at"], retry_in_seconds=remaining,
+                waiting_page=page,
+                message="در انتظار دریافت سری بعدی اطلاعات",
+            )
+            time.sleep(remaining)
     while True:
         try:
             payload = _fetch_for_group(session, category, page, rows, collection_group)
@@ -382,12 +400,20 @@ def _fetch_centralboard_page_with_wait(
             initial = max(float(retry_initial_seconds), 0.0)
             cap = max(float(retry_max_seconds), initial)
             backoff = min(initial * (2 ** min(retry_count - 1, 10)), cap)
-            wait_seconds = retry_after if retry_after is not None else backoff
+            # A Retry-After may lengthen, but never shorten, the local cooldown.
+            minimum_wait = max(initial, retry_after or 0.0)
+            wait_seconds = max(backoff, minimum_wait)
+            now = time.time()
+            retry_at = now + wait_seconds
+            manual_at = now + minimum_wait
+            retry_id = uuid4().hex
+            signal_name = os.environ.get("SETADSCOPE_RETRY_SIGNAL")
             checkpoint.update({
                 "status": "waiting",
                 "waiting_page": page,
                 "retry_count": retry_count,
                 "last_retry_delay_seconds": wait_seconds,
+                "retry_at": retry_at,
                 "last_error": exc.diagnostic,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             })
@@ -405,13 +431,38 @@ def _fetch_centralboard_page_with_wait(
                 progress_percent=int(85 * completed / max(int(total_pages or 1), 1)),
                 retry_count=retry_count,
                 retry_in_seconds=wait_seconds,
+                retry_at=retry_at,
+                manual_retry_at=manual_at if signal_name and manual_at < retry_at else None,
+                retry_id=retry_id,
                 waiting_page=page,
-                message=(
-                    f"سرور برای صفحه {page} پاسخ HTTP 428 داده است؛ "
-                    f"درخواست متوقف شد و {int(wait_seconds)} ثانیه دیگر دوباره بررسی می‌شود."
-                ),
+                message="در انتظار دریافت سری بعدی اطلاعات",
             )
-            time.sleep(wait_seconds)
+            # Keep the diagnostic in the backend log; it is not a user-facing failure.
+            print(str(exc), file=sys.stderr, flush=True)
+            if not signal_name or minimum_wait >= wait_seconds:
+                time.sleep(wait_seconds)
+            else:
+                # A manual request can only advance the longer backoff, never
+                # the minimum cooldown or an explicit server Retry-After.
+                time.sleep(minimum_wait)
+                signal = Path(signal_name)
+                deadline = time.monotonic() + (wait_seconds - minimum_wait)
+                while time.monotonic() < deadline:
+                    try:
+                        if signal.read_text(encoding="utf-8") == retry_id:
+                            break
+                    except OSError:
+                        pass
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+            emit_progress(
+                collection_group=collection_group, category=category,
+                phase="collecting", current_page=completed + 1,
+                total_pages=total_pages, pages_completed=completed,
+                records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
+                records_total=total_records,
+                progress_percent=int(85 * completed / max(int(total_pages or 1), 1)),
+                message="در حال دریافت سری بعدی اطلاعات...",
+            )
 
 
 def _collect_centralboard(

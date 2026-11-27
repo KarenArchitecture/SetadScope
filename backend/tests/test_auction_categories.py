@@ -455,6 +455,10 @@ def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
     assert summary["complete_source"] is True
     assert summary["rows_saved"] == 5
     assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
+    waiting = next(event for event in events if event["phase"] == "waiting_for_access")
+    assert waiting["retry_in_seconds"] == 2.0
+    assert waiting["retry_at"] > 0
+    assert waiting["manual_retry_at"] is None
     assert any(event["phase"] == "waiting_for_access" for event in events)
     assert any("دسترسی به منبع برقرار شد" in event.get("message", "") for event in events)
     assert not (tmp_path / "clearance_checkpoint.json").exists()
@@ -509,3 +513,30 @@ def test_clearance_resumes_from_checkpoint_without_refetching_saved_pages(tmp_pa
     assert summary["rows_saved"] == 5
     assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
     assert not checkpoint_path.exists()
+
+
+def test_clearance_default_cooldown_starts_at_four_minutes(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    sleeps = []
+    attempts = []
+    events = []
+
+    def fetch(*args):
+        attempts.append(1)
+        if len(attempts) <= 2:
+            response = module.requests.Response()
+            response.status_code = 428
+            response._content = b'{"flag":true}'
+            if len(attempts) == 2:
+                response.headers["Retry-After"] = "360"
+            raise module.ClearancePreconditionError("shared/clearance", 0, response)
+        return {"content": [{"cartId": 1}], "totalPages": 1, "totalElements": 1}
+
+    monkeypatch.delenv("SETADSCOPE_RETRY_SIGNAL", raising=False)
+    monkeypatch.setattr(module, "_fetch_for_group", fetch)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
+    module.collect("clearance", delay=0, raw_dir=tmp_path, session=Mock(), collection_group="shared")
+    assert sleeps == [240.0, 360.0]
+    assert [e["retry_in_seconds"] for e in events if e["phase"] == "waiting_for_access"] == sleeps
