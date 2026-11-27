@@ -605,6 +605,18 @@ export default function Dashboard({ kind }) {
       : result.items.filter((item) => item.state === "PUBLISHED").length;
   const archiveStats = result.archive_stats || {};
   const collectionRunning = ACTIVE_STATES.has(collectionState.status);
+
+  // Attach the exit warning immediately when a page-level collection is started.
+  // The browser still allows leaving; the backend collector is independent of this page.
+  useEffect(() => {
+    if (!collectionStarting && !collectionRunning) return undefined;
+    function warnBeforeUnload(event) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [collectionStarting, collectionRunning]);
   const collectionRunKey = collectionState.finished_at || collectionState.started_at;
   const isCollectionProgressDismissed = collectionProgressDismissed ||
     Boolean(collectionRunKey && dismissedCollectionRuns.current.has(collectionRunKey));
