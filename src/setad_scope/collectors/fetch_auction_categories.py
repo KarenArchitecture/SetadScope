@@ -276,6 +276,9 @@ def _centralboard_checkpoint_identity(source, rows: int) -> dict:
         "category": source.category,
         "source": source.source,
         "adapter": source.adapter,
+        "base_url": source.base_url,
+        "path": source.path,
+        "fixed_params": [[key, value] for key, value in source.fixed_params],
         "rows": rows,
     }
 
@@ -285,6 +288,8 @@ def _load_centralboard_checkpoint(path: Path, raw_dir: Path, identity: dict) -> 
         return None
     try:
         checkpoint = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(checkpoint, dict):
+            return None
         if any(checkpoint.get(key) != value for key, value in identity.items()):
             return None
         if checkpoint.get("status") not in {"collecting", "waiting", "interrupted", "partial"}:
@@ -292,6 +297,8 @@ def _load_centralboard_checkpoint(path: Path, raw_dir: Path, identity: dict) -> 
         if not isinstance(checkpoint.get("stamp"), str):
             return None
         if not isinstance(checkpoint.get("next_page"), int) or checkpoint["next_page"] < 0:
+            return None
+        if checkpoint.get("total_pages") is not None and checkpoint["next_page"] > int(checkpoint["total_pages"]):
             return None
         pages = checkpoint.get("pages")
         if not isinstance(pages, list):
