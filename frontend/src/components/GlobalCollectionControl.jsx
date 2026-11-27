@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, LoaderCircle, RefreshCw, X } from "lucide-react";
 import {
   getGlobalCollectionStatus,
+  getCollectionStatus,
   startGlobalCollection,
 } from "../services/api";
 import { notifyToast } from "../utils/toast";
@@ -14,6 +15,7 @@ function formatNumber(value) {
 
 export default function GlobalCollectionControl({ apiOnline }) {
   const [state, setState] = useState(null);
+  const [clearanceState, setClearanceState] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [failuresOpen, setFailuresOpen] = useState(false);
@@ -21,6 +23,8 @@ export default function GlobalCollectionControl({ apiOnline }) {
   const [startedHere, setStartedHere] = useState(false);
 
   const isRunning = state?.status === "running";
+  const isClearanceRunning = ["collecting", "importing"].includes(clearanceState?.status);
+  const shouldWarnBeforeLeaving = isRunning || isClearanceRunning;
   const runId = state?.started_at || null;
   const failedSources = Array.isArray(state?.failed_sources) ? state.failed_sources : [];
   const progress = Math.max(
@@ -43,22 +47,39 @@ export default function GlobalCollectionControl({ apiOnline }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const next = await getGlobalCollectionStatus();
-        if (active) setState(next);
-      } catch {
-        // Keep the last known state visible during temporary API interruptions.
+        const [globalResult, clearanceResult] = await Promise.allSettled([
+          getGlobalCollectionStatus(),
+          getCollectionStatus("auctions", "clearance", "shared"),
+        ]);
+        if (active && globalResult.status === "fulfilled") setState(globalResult.value);
+        if (active && clearanceResult.status === "fulfilled") setClearanceState(clearanceResult.value);
       } finally {
         requestInFlight = false;
       }
     }
 
     refreshStatus();
-    const timer = window.setInterval(refreshStatus, isRunning ? 1000 : 10000);
+    const timer = window.setInterval(
+      refreshStatus,
+      (isRunning || isClearanceRunning) ? 1000 : 10000,
+    );
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isRunning]);
+  }, [isRunning, isClearanceRunning]);
+
+  // Warn before leaving while the long-running Central Board collector is active.
+  // The browser still lets the user leave; the backend job continues independently.
+  useEffect(() => {
+    if (!shouldWarnBeforeLeaving) return undefined;
+    function warnBeforeUnload(event) {
+      event.preventDefault();
+      event.returnValue = "";
+    }
+    window.addEventListener("beforeunload", warnBeforeUnload);
+    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
+  }, [shouldWarnBeforeLeaving]);
 
   useEffect(() => {
     if (!confirmOpen) return undefined;

@@ -316,9 +316,12 @@ def run_collection_job(
             collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.7"]
         else:
             module = "setad_scope.collectors.fetch_auction_categories"
+            request_delay = (
+                "2.0" if group == "shared" and category == "clearance" else "0.7"
+            )
             collector_args = [
                 "--group", group, "--category", category,
-                "--start-page", "0", "--delay", "0.7",
+                "--start-page", "0", "--delay", request_delay,
             ]
 
         process = subprocess.Popen(

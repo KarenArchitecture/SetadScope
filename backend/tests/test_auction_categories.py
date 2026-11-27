@@ -409,34 +409,103 @@ def test_eauc_rejects_wrong_reported_page_to_prevent_missing_data(tmp_path, monk
     assert not list(root.glob("movable_run_*.json"))
 
 
-def test_clearance_428_preserves_partial_pages_without_retrying(tmp_path, capsys):
+def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
     from setad_scope.collectors import fetch_auction_categories as module
 
     requested = []
+    sleeps = []
+    events = []
+    blocked_page_two = {"first": True}
 
     class Session:
         def get(self, url, params, timeout):
             page = params["pageNumber"]
             requested.append(page)
             response = module.requests.Response()
-            response.status_code = 428 if page == 2 else 200
-            response._content = b'{"content":[{"cartId":1}],"totalPages":5,"totalElements":25}'
+            if page == 2 and blocked_page_two["first"]:
+                blocked_page_two["first"] = False
+                response.status_code = 428
+                response.headers["Retry-After"] = "2"
+                response._content = b'{"flag":true}'
+            else:
+                response.status_code = 200
+                response._content = json.dumps({
+                    "content": [{"cartId": page + 100}],
+                    "totalPages": 5,
+                    "totalElements": 5,
+                }).encode("utf-8")
+            response.url = url
             return response
 
-    with pytest.raises(module.ClearancePreconditionError, match="HTTP 428") as error:
-        module.collect("clearance", delay=0, raw_dir=tmp_path, session=Session())
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
 
-    assert error.value.diagnostic["status_code"] == 428
-    assert error.value.diagnostic["page_number"] == 2
-    assert "HTTP 428" in str(error.value)
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Session(),
+        collection_group="shared",
+        retry_initial_seconds=1,
+        retry_max_seconds=4,
+    )
 
-    assert requested == [0, 1, 2]
-    assert not list(tmp_path.glob("clearance_run_*.json"))
-    manifest, = tmp_path.glob("clearance_partial_*.json")
-    assert f"PARTIAL_MANIFEST:{manifest.name}" in capsys.readouterr().out
-    result = json.loads(manifest.read_text(encoding="utf-8"))
-    assert result["complete_source"] is False
-    assert [page["page"] for page in result["pages"]] == [0, 1]
-    assert result["error"]["status_code"] == 428
-    assert result["error"]["page_number"] == 2
-    assert result["error"]["body_preview"]
+    assert requested == [0, 1, 2, 2, 3, 4]
+    assert sleeps == [2.0]
+    assert summary["complete_source"] is True
+    assert summary["rows_saved"] == 5
+    assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
+    assert any(event["phase"] == "waiting_for_access" for event in events)
+    assert any("دسترسی به منبع برقرار شد" in event.get("message", "") for event in events)
+    assert not (tmp_path / "clearance_checkpoint.json").exists()
+
+
+def test_clearance_resumes_from_checkpoint_without_refetching_saved_pages(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    requested = []
+    should_fail = {"value": True}
+
+    def fake_fetch(session, category, page, rows, collection_group=None):
+        requested.append(page)
+        if page == 2 and should_fail["value"]:
+            raise RuntimeError("simulated interruption")
+        return {
+            "content": [{"cartId": page + 100}],
+            "totalPages": 5,
+            "totalElements": 5,
+        }
+
+    monkeypatch.setattr(module, "fetch_page", fake_fetch)
+
+    with pytest.raises(RuntimeError, match="simulated interruption"):
+        module.collect(
+            "clearance",
+            delay=0,
+            raw_dir=tmp_path,
+            session=Mock(),
+            collection_group="shared",
+        )
+
+    checkpoint_path = tmp_path / "clearance_checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "interrupted"
+    assert checkpoint["next_page"] == 2
+    assert [item["page"] for item in checkpoint["pages"]] == [0, 1]
+
+    should_fail["value"] = False
+    requested.clear()
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Mock(),
+        collection_group="shared",
+    )
+
+    assert requested == [2, 3, 4]
+    assert summary["resumed"] is True
+    assert summary["complete_source"] is True
+    assert summary["rows_saved"] == 5
+    assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
+    assert not checkpoint_path.exists()
