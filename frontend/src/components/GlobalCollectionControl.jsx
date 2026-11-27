@@ -61,7 +61,7 @@ export default function GlobalCollectionControl({ apiOnline }) {
     refreshStatus();
     const timer = window.setInterval(
       refreshStatus,
-      (isRunning || isClearanceRunning) ? 1000 : 10000,
+      (isRunning || isClearanceRunning) ? 1000 : 3000,
     );
     return () => {
       active = false;
@@ -286,6 +286,10 @@ export default function GlobalCollectionControl({ apiOnline }) {
               این فرآیند با توجه به تعداد صفحات ممکن است زمان‌بر باشد. اگر یک Collector با خطا مواجه شود،
               فقط همان منبع ناموفق ثبت می‌شود و اجرای منابع بعدی ادامه پیدا می‌کند.
               در تمام این مدت می‌توانی در بخش‌های دیگر سایت جابه‌جا شوی؛ عملیات در سمت سرور ادامه خواهد داشت.
+            </p>
+            <p>
+              اگر حراج دستگاه‌های اجرایی پاسخ HTTP 428 بدهد، عملیات وارد حالت انتظار می‌شود و پس از بازگشت دسترسی از همان صفحه ادامه می‌یابد.
+              بستن تب با هشدار مرورگر همراه است، اما اجرای سمت سرور ادامه پیدا می‌کند.
             </p>
             <div className="global-collection-dialog__actions">
               <button
