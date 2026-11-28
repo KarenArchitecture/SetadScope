@@ -11,7 +11,6 @@ export default function CollectionWait({ state }) {
   const [submittedId, setSubmittedId] = useState(null);
   const [submitting, setSubmitting] = useState(false);
   const deadline = Number(state?.retry_at || 0);
-  const manualAt = Number(state?.manual_retry_at || 0);
   const remaining = Math.max(0, Math.ceil(deadline - now));
   const retryId = state?.retry_id;
   const waiting = state?.status === "collecting"
@@ -27,7 +26,7 @@ export default function CollectionWait({ state }) {
 
   if (!waiting) return null;
   const accepted = Boolean(retryId && submittedId === retryId);
-  const canRetry = Boolean(retryId && manualAt && now >= manualAt && now < deadline && !accepted && !submitting);
+  const canRetry = Boolean(retryId && now < deadline && !accepted && !submitting);
   async function retry() {
     if (!canRetry) return;
     setSubmitting(true);
@@ -53,13 +52,13 @@ export default function CollectionWait({ state }) {
         </span>
         <button type="button" className="button button--secondary collection-wait__retry"
           onClick={retry} disabled={!canRetry}
-          title={manualAt ? "بررسی دستی پس از پایان حداقل زمان انتظار" : "بررسی خودکار پس از پایان زمان انتظار انجام می‌شود"}>
+          title="یک بررسی زودتر از برنامه خودکار انجام می‌دهد؛ ممکن است سامانه هنوز آماده پاسخ‌گویی نباشد.">
           <RefreshCw size={14} aria-hidden="true" />
-          {accepted ? "درخواست ثبت شد" : "تلاش مجدد"}
+          {accepted ? "درخواست ثبت شد" : submitting ? "در حال ارسال..." : "تلاش مجدد"}
         </button>
       </div>
-      {manualAt > now && manualAt < deadline && !accepted && (
-        <small>امکان بررسی دستی پس از {format.format(Math.ceil(manualAt - now))} ثانیه فعال می‌شود.</small>
+      {!accepted && (
+        <small>می‌توانی هر زمان خواستی یک بار دیگر دسترسی منبع را بررسی کنی؛ در صورت آماده نبودن سامانه، زمان‌بندی خودکار دوباره تنظیم می‌شود.</small>
       )}
     </div>
   );
