@@ -16,7 +16,7 @@ Both groups expose the same five categories. Clearance is not a shared group.
 | executive_agencies | immovable | EAUC | `/eauc/mainImmovable-Load.action` |
 | executive_agencies | rental | EAUC | `/eauc/mainRental-Load.action` |
 | executive_agencies | minor | EAUC | `/eauc/mainMinor-Load.action` |
-| executive_agencies | clearance | Central Board | `tagCode=341,343` |
+| executive_agencies | clearance | Central Board | `tagCode=341,343&notOrgId=5315` |
 | amval_tamliki | movable | EAUC | `/eauc/mainEstate-Load.action` |
 | amval_tamliki | immovable | EAUC | `/eauc/mainImmovable-Load.action` |
 | amval_tamliki | rental | EAUC | `/eauc/mainRental-Load.action` |
@@ -28,6 +28,7 @@ Both groups expose the same five categories. Clearance is not a shared group.
 ```text
 GET https://gw.setadiran.ir/api/centralboard/cards/
     ?tagCode=341,343
+    &notOrgId=5315
     &boardCode=3
     &searchTypeCode=0
     &isLogin=false
