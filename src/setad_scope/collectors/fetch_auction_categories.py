@@ -405,7 +405,10 @@ def _fetch_centralboard_page_with_wait(
             wait_seconds = max(backoff, minimum_wait)
             now = time.time()
             retry_at = now + wait_seconds
-            manual_at = now + minimum_wait
+            # Manual probes are intentionally available immediately. The normal
+            # automatic retry still waits for wait_seconds unless the user asks
+            # for an earlier check from the UI.
+            manual_at = now
             retry_id = uuid4().hex
             signal_name = os.environ.get("SETADSCOPE_RETRY_SIGNAL")
             checkpoint.update({
@@ -432,21 +435,21 @@ def _fetch_centralboard_page_with_wait(
                 retry_count=retry_count,
                 retry_in_seconds=wait_seconds,
                 retry_at=retry_at,
-                manual_retry_at=manual_at if signal_name and manual_at < retry_at else None,
+                manual_retry_at=manual_at if signal_name else None,
                 retry_id=retry_id,
                 waiting_page=page,
                 message="در انتظار دریافت سری بعدی اطلاعات",
             )
             # Keep the diagnostic in the backend log; it is not a user-facing failure.
             print(str(exc), file=sys.stderr, flush=True)
-            if not signal_name or minimum_wait >= wait_seconds:
+            if not signal_name:
                 time.sleep(wait_seconds)
             else:
-                # A manual request can only advance the longer backoff, never
-                # the minimum cooldown or an explicit server Retry-After.
-                time.sleep(minimum_wait)
+                # Watch for a user-requested early probe throughout the entire
+                # cooldown. Without a manual signal, retry automatically at
+                # the scheduled deadline.
                 signal = Path(signal_name)
-                deadline = time.monotonic() + (wait_seconds - minimum_wait)
+                deadline = time.monotonic() + wait_seconds
                 while time.monotonic() < deadline:
                     try:
                         if signal.read_text(encoding="utf-8") == retry_id:
