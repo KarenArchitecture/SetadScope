@@ -157,7 +157,7 @@ assert.match(app, /<ToastViewport \/>/);
 assert.match(dashboard, /className="collection-action-card"/);
 assert.match(dashboard, /collection-action-card__last-updated/);
 assert.match(dashboard, /notifyToast\(\s*"loading"/);
-assert.match(dashboard, /notifyToast\(nextState\.status === "completed" \? "success" : "error"/);
+assert.match(dashboard, /notifyToast\(\s*nextState\.status === "completed" \? "success" : "error"/);
 assert.match(dashboard, /notifyToast\(\s*"error"/);
 assert.match(toastViewport, /setadscope:toast/);
 assert.match(toastViewport, /aria-live="polite"/);
