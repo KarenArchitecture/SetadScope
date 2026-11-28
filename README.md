@@ -149,7 +149,7 @@ independent Central Board clearance source. There is no shared clearance group.
 | executive_agencies | immovable | EAUC | `mainImmovable-Load.action` |
 | executive_agencies | rental | EAUC | `mainRental-Load.action` |
 | executive_agencies | minor | EAUC | `mainMinor-Load.action` |
-| executive_agencies | clearance | Central Board | `tagCode=341,343`, no selected organization |
+| executive_agencies | clearance | Central Board | `tagCode=341,343&notOrgId=5315` |
 | amval_tamliki | movable | EAUC | `mainEstate-Load.action` |
 | amval_tamliki | immovable | EAUC | `mainImmovable-Load.action` |
 | amval_tamliki | rental | EAUC | `mainRental-Load.action` |
@@ -159,7 +159,7 @@ independent Central Board clearance source. There is no shared clearance group.
 The two Central Board requests use
 `https://gw.setadiran.ir/api/centralboard/cards/` and the same pagination and
 response adapter. Their ownership filters are different:
-- Executive agencies: `tagCode=341,343`.
+- Executive agencies: `tagCode=341,343` and `notOrgId=5315` (exclude Amval Tamliki).
 - Amval Tamliki: `tagCode=342` and `selectedOrganization=5315`.
 
 The Amval collector verifies that every returned card has `orgId=5315` before
