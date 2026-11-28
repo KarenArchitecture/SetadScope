@@ -154,7 +154,6 @@ const toastViewport = read("src/components/ToastViewport.jsx");
 const toastStyles = read("src/components/ToastViewport.css");
 const toastUtils = read("src/utils/toast.js");
 const retryWait = read("src/components/CollectionWait.jsx");
-const globalCollection = read("src/components/GlobalCollectionControl.jsx");
 assert.match(app, /<ToastViewport \/>/);
 assert.match(dashboard, /className="collection-action-card"/);
 assert.match(dashboard, /collection-action-card__last-updated/);
