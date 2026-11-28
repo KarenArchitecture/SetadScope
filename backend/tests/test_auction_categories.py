@@ -586,7 +586,10 @@ def test_clearance_read_timeout_checkpoint_resumes_from_failed_page(tmp_path, mo
             response = module.requests.Response()
             response.status_code = 200
             response._content = json.dumps({
-                "content": [{"cartId": page + 100}],
+                "content": [{
+                    "cartId": page + 100,
+                    "orgId": 5315 if group == "amval_tamliki" else 1000,
+                }],
                 "totalPages": 5,
                 "totalElements": 5,
             }).encode("utf-8")
