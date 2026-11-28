@@ -170,5 +170,9 @@ assert.match(dashboard, /<CollectionWait state={state} \/>/);
 assert.match(globalCollection, /<CollectionWait state={state} \/>/);
 assert.match(retryWait, /retryClearance\(retryId, collectionGroup\)/);
 assert.match(retryWait, /retryId && now < deadline/);
+assert.match(dashboard, /state\.resumable/);
+assert.match(dashboard, /onRetry=\{handleCollection\}/);
+assert.match(dashboard, /resume_page/);
+assert.match(dashboard, /تلاش مجدد از صفحه/);
 
-console.log("Toast and clearance retry interaction checks passed.");
+console.log("Toast and resumable clearance retry interaction checks passed.");
