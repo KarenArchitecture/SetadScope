@@ -209,8 +209,12 @@ function CollectionProgress({ state, kind, onDismiss, onRetry, retrying = false 
       importing: "در حال ذخیره در پایگاه داده",
       running: "در حال جمع‌آوری مزایده‌ها",
     }[state.status] || "در حال دریافت از سامانه ستاد");
-  const panelLabel =
-    kind === "tenders" ? "فرآیند مناقصه‌ها" : "فرآیند مزایده‌ها";
+  const ownerLabel = state.collection_group === "all"
+    ? "هر دو مجموعه"
+    : GROUP_LABELS[state.collection_group];
+  const panelLabel = kind === "tenders" ? "فرآیند مناقصه‌ها"
+    : [state.category === "clearance" ? "فرآیند حراج" : "فرآیند مزایده‌ها", ownerLabel]
+        .filter(Boolean).join(" · ");
 
   return (
     <section
@@ -628,6 +632,10 @@ export default function Dashboard({ kind }) {
     () => [kind, collectionCategory, effectiveCollectionGroup, batchCategories],
     [kind, collectionCategory, effectiveCollectionGroup, batchCategories],
   );
+  // A run belongs to its exact collection target, not the currently visible tab.
+  const collectionScopeKey = JSON.stringify([
+    kind, collectionCategory, effectiveCollectionGroup, [...(batchCategories || [])].sort(),
+  ]);
   const auctionScope = useMemo(
     () => ({
       category: "all",
@@ -662,16 +670,15 @@ export default function Dashboard({ kind }) {
   );
   const [selectedRecord, setSelectedRecord] = useState(null);
   const [detailLoading, setDetailLoading] = useState(false);
-  const [collectionState, setCollectionState] = useState({ status: "idle" });
-  const [trackedCollection, setTrackedCollection] = useState(null);
+  const [collectionStatesByScope, setCollectionStatesByScope] = useState({});
+  const [startingScopes, setStartingScopes] = useState({});
+  const collectionState = collectionStatesByScope[collectionScopeKey] || { status: "idle" };
+  const collectionStarting = Boolean(startingScopes[collectionScopeKey]);
+  const collectionTargets = useRef(new Map());
   const [collectionProgressDismissed, setCollectionProgressDismissed] =
     useState(false);
   const dismissedCollectionRuns = useRef(new Set());
-  const lastRefreshedRun = useRef(null);
-  const lastNotifiedCollectionRun = useRef(null);
   const lastRequestId = useRef(0);
-  const startRequestVersion = useRef(0);
-  const [collectionStarting, setCollectionStarting] = useState(false);
 
   const loadPage = useCallback(
     async (nextPage = 1) => {
@@ -720,84 +727,76 @@ export default function Dashboard({ kind }) {
   }, [loadPage]);
 
   useEffect(() => {
-    if (trackedCollection) return undefined;
-    let active = true;
-    const requestVersion = startRequestVersion.current;
-    getCollectionStatus(...collectionTarget)
-      .then((status) => {
-        if (!active || requestVersion !== startRequestVersion.current) return;
-        setCollectionState(status);
-        if (ACTIVE_STATES.has(status.status))
-          setTrackedCollection(collectionTarget);
-      })
-      .catch(() => {});
-    return () => {
-      active = false;
-    };
-  }, [collectionTarget, trackedCollection]);
-
-  useEffect(() => {
-    if (!trackedCollection || !ACTIVE_STATES.has(collectionState.status))
-      return undefined;
     let cancelled = false;
-    let requestInFlight = false;
-    const timer = window.setInterval(async () => {
-      if (requestInFlight) return;
-      requestInFlight = true;
+    const targets = collectionTargets.current;
+    if (!targets.has(collectionScopeKey)) {
+      targets.set(collectionScopeKey, {
+        target: collectionTarget, label: collectionLabel,
+        state: { status: "idle" }, version: 0,
+      });
+    }
+    const selected = targets.get(collectionScopeKey);
+    selected.target = collectionTarget;
+    selected.label = collectionLabel;
+    selected.needsRefresh = true;
+
+    async function poll(scopeKey, entry) {
+      if (entry.inFlight || entry.pendingStart) return;
+      entry.inFlight = true;
+      const version = entry.version;
       try {
-        const nextState = await getCollectionStatus(...trackedCollection);
-        if (cancelled) return;
-        setCollectionState(nextState);
-        const completedRunKey = nextState.finished_at || nextState.started_at;
-        const finished = [
-          "completed",
-          "completed_with_errors",
-          "failed",
-        ].includes(nextState.status);
-        if (
-          finished &&
-          completedRunKey &&
-          lastNotifiedCollectionRun.current !== completedRunKey
-        ) {
-          lastNotifiedCollectionRun.current = completedRunKey;
-          const stored = formatNumber(
-            nextState.records_stored || nextState.totals?.stored || 0,
-          );
-          const message =
-            nextState.kind === "auction_batch"
-              ? nextState.message
-              : nextState.status === "completed"
-                ? "جمع‌آوری " +
-                  collectionLabel +
-                  " با موفقیت انجام شد. " +
-                  stored +
-                  " رکورد ذخیره شد."
-                : "جمع‌آوری " +
-                  collectionLabel +
-                  " ناموفق بود. جزئیات در پنل وضعیت اجرا قابل مشاهده است.";
+        const nextState = await getCollectionStatus(...entry.target);
+        if (cancelled || version !== entry.version) return;
+        const wasActive = ACTIVE_STATES.has(entry.state.status);
+        entry.state = nextState;
+        entry.needsRefresh = false;
+        setCollectionStatesByScope((current) => ({ ...current, [scopeKey]: nextState }));
+        const finished = ["completed", "completed_with_errors", "failed"].includes(nextState.status);
+        if (wasActive && finished) {
+          const stored = formatNumber(nextState.records_stored || nextState.totals?.stored || 0);
+          const message = nextState.kind === "auction_batch"
+            ? nextState.message
+            : nextState.status === "completed"
+              ? "جمع‌آوری " + entry.label + " با موفقیت انجام شد. " + stored + " رکورد ذخیره شد."
+              : "جمع‌آوری " + entry.label + " ناموفق بود. جزئیات در پنل وضعیت اجرا قابل مشاهده است.";
           notifyToast(
             nextState.status === "completed" ? "success" : "error",
             message,
             { duration: 5500 },
           );
-          const hasSavedData =
-            nextState.status !== "failed" || nextState.records_stored > 0;
-          if (hasSavedData && lastRefreshedRun.current !== completedRunKey) {
-            lastRefreshedRun.current = completedRunKey;
+          if (scopeKey === collectionScopeKey &&
+              (nextState.status !== "failed" || nextState.records_stored > 0)) {
             await loadPage(1);
           }
         }
       } catch {
-        if (!cancelled) setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
+        if (!cancelled && scopeKey === collectionScopeKey &&
+            ACTIVE_STATES.has(entry.state.status)) {
+          setError("دریافت وضعیت لحظه‌ای جمع‌آوری ناموفق بود.");
+        }
       } finally {
-        requestInFlight = false;
+        entry.inFlight = false;
       }
-    }, 1000);
+    }
+
+    function tick() {
+      for (const [scopeKey, entry] of targets) {
+        // Keep started runs tracked off-screen, but never display their state
+        // in another scope. Idle scopes only need an initial status lookup.
+        if (ACTIVE_STATES.has(entry.state.status) ||
+            (scopeKey === collectionScopeKey && entry.needsRefresh)) {
+          void poll(scopeKey, entry);
+        }
+      }
+    }
+
+    tick();
+    const timer = window.setInterval(tick, 1000);
     return () => {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, [collectionState.status, trackedCollection, loadPage, collectionLabel]);
+  }, [collectionTarget, collectionScopeKey, collectionLabel, loadPage]);
 
   const provinceCount = new Set(
     result.items.map((item) => item.province).filter(Boolean),
@@ -1020,12 +1019,8 @@ export default function Dashboard({ kind }) {
   }, [isTender, auctionCategory, collectionGroup]);
 
   function clearCollectionState() {
-    if (collectionStarting || collectionRunning) return;
-    setTrackedCollection(null);
-    setCollectionState({ status: "idle" });
+    // Changing filters only changes which run is displayed.
     setCollectionProgressDismissed(false);
-    lastRefreshedRun.current = null;
-    lastNotifiedCollectionRun.current = null;
   }
 
   function handleCategoryChange(category) {
@@ -1079,9 +1074,19 @@ export default function Dashboard({ kind }) {
   }
 
   async function handleCollection() {
-    startRequestVersion.current += 1;
-    setTrackedCollection(collectionTarget);
-    setCollectionStarting(true);
+    const scopeKey = collectionScopeKey;
+    const targets = collectionTargets.current;
+    if (!targets.has(scopeKey)) {
+      targets.set(scopeKey, {
+        target: collectionTarget, label: collectionLabel,
+        state: { status: "idle" }, version: 0,
+      });
+    }
+    const entry = targets.get(scopeKey);
+    if (entry.pendingStart || ACTIVE_STATES.has(entry.state.status)) return;
+    entry.version += 1;
+    entry.pendingStart = true;
+    setStartingScopes((current) => ({ ...current, [scopeKey]: true }));
     setError("");
     setCollectionProgressDismissed(false);
     const toastId = notifyToast(
@@ -1091,10 +1096,12 @@ export default function Dashboard({ kind }) {
     );
     try {
       const nextState = await startCollection(...collectionTarget);
-      setCollectionState((current) => ({
+      entry.state = {
         ...nextState,
-        last_updated_at: nextState.last_updated_at ?? current.last_updated_at,
-      }));
+        last_updated_at: nextState.last_updated_at ?? entry.state.last_updated_at,
+      };
+      entry.needsRefresh = true;
+      setCollectionStatesByScope((current) => ({ ...current, [scopeKey]: entry.state }));
       notifyToast(
         "info",
         "درخواست جمع‌آوری " +
@@ -1106,11 +1113,11 @@ export default function Dashboard({ kind }) {
       const message =
         requestError.response?.data?.detail ||
         "شروع جمع‌آوری " + collectionLabel + " ناموفق بود.";
-      setTrackedCollection(null);
-      setError(message);
+      entry.needsRefresh = true;
       notifyToast("error", message, { id: toastId, duration: 6500 });
     } finally {
-      setCollectionStarting(false);
+      entry.pendingStart = false;
+      setStartingScopes((current) => ({ ...current, [scopeKey]: false }));
     }
   }
 

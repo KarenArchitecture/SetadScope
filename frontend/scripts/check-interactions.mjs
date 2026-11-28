@@ -175,4 +175,13 @@ assert.match(dashboard, /onRetry=\{handleCollection\}/);
 assert.match(dashboard, /resume_page/);
 assert.match(dashboard, /تلاش مجدد از صفحه/);
 
-console.log("Toast and resumable clearance retry interaction checks passed.");
+// A source switch must not reuse another owner's run, timestamps or retry target.
+assert.match(dashboard, /const collectionScopeKey = JSON\.stringify\(/);
+assert.match(dashboard, /collectionStatesByScope\[collectionScopeKey\]/);
+assert.match(dashboard, /startingScopes\[collectionScopeKey\]/);
+assert.match(dashboard, /getCollectionStatus\(\.\.\.entry\.target\)/);
+assert.match(dashboard, /version !== entry\.version/);
+assert.match(dashboard, /setCollectionStatesByScope\(\(current\) => \(\{ \.\.\.current, \[scopeKey\]: nextState \}\)\)/);
+assert.match(dashboard, /ACTIVE_STATES\.has\(entry\.state\.status\) \|\|/);
+assert.doesNotMatch(dashboard, /if \(trackedCollection\) return/);
+console.log("Toast, scoped collection status and resumable retry checks passed.");
