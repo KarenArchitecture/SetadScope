@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Clock, RefreshCw } from "lucide-react";
 import { retryClearance } from "../services/api";
 import { notifyToast } from "../utils/toast";
+import "./CollectionWait.css";
 
 const two = new Intl.NumberFormat("fa-IR", {
   minimumIntegerDigits: 2,
