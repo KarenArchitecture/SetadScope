@@ -158,6 +158,7 @@ def test_endpoints_and_zero_based_pagination():
             assert params["propertySearchCriteriaDto.auctionType"] == "NON_PROPERTY"
         if category == "clearance":
             assert params["tagCode"] == "341,343"
+            assert params["notOrgId"] == "5315"
             assert "selectedOrganization" not in params
             assert params["boardCode"] == "3"
 
@@ -194,6 +195,7 @@ def test_group_registry_keeps_clearance_sources_independent():
     executive_url, executive_params = request_details("clearance", 0, 5, "executive_agencies")
     assert "/api/centralboard/cards/" in executive_url
     assert executive_params["tagCode"] == "341,343"
+    assert executive_params["notOrgId"] == "5315"
     assert "selectedOrganization" not in executive_params
 
     amval_url, amval_params = request_details("clearance", 0, 5, "amval_tamliki")
