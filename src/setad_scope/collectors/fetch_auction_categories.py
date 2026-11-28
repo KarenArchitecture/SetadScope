@@ -78,7 +78,10 @@ def request_details(
     url = source.base_url + source.path
     params = dict(source.fixed_params)
     if source.adapter == "centralboard":
+        sort = params.pop("sort", None)
         params.update({"pageNumber": page, "pageSize": rows})
+        if sort is not None:
+            params["sort"] = sort
     else:
         stamp = int(time.time() * 1000)
         params.update({
@@ -114,9 +117,54 @@ def _record_auctioneer_id(record: dict, category: str):
 
 
 def validate_source_context(rows: list[dict], source) -> None:
-    """Reject a snapshot if EAUC's session context returned another organization."""
+    """Reject a response when its records do not belong to the configured owner."""
+    if not rows:
+        return
+
+    expected_organization_id = source.expected_organization_id
+    if expected_organization_id is not None:
+        observed_ids = []
+        missing_rows = []
+        mismatches = []
+        for row_number, record in enumerate(rows, start=1):
+            if not isinstance(record, dict) or record.get("orgId") is None:
+                missing_rows.append(row_number)
+                continue
+            actual_id = str(record["orgId"])
+            observed_ids.append(actual_id)
+            if actual_id != str(expected_organization_id):
+                mismatches.append((row_number, actual_id))
+
+        if mismatches:
+            examples = ", ".join(
+                f"row {row_number}: orgId={actual_id}"
+                for row_number, actual_id in mismatches[:5]
+            )
+            unexpected_ids = ", ".join(sorted({actual_id for _, actual_id in mismatches}))
+            raise SourceContextMismatch(
+                f"Central Board source context mismatch for "
+                f"{source.collection_group}/{source.category}: "
+                f"expected orgId={expected_organization_id}, received {unexpected_ids} "
+                f"({examples}). The response was rejected to prevent cross-collection contamination."
+            )
+        if missing_rows:
+            examples = ", ".join(str(row_number) for row_number in missing_rows[:5])
+            raise SourceContextMismatch(
+                f"Cannot verify Central Board source context for "
+                f"{source.collection_group}/{source.category}: orgId is missing in row(s) "
+                f"{examples}; expected {expected_organization_id}. "
+                "The response was rejected rather than stored under an unverified collection."
+            )
+        if not observed_ids:
+            raise SourceContextMismatch(
+                f"Cannot verify Central Board source context for "
+                f"{source.collection_group}/{source.category}: no orgId was present; "
+                f"expected {expected_organization_id}."
+            )
+        return
+
     expected_id = source.expected_auctioneer_id
-    if expected_id is None or not rows:
+    if expected_id is None:
         return
 
     observed_ids = []
@@ -150,7 +198,6 @@ def validate_source_context(rows: list[dict], source) -> None:
             f"no auctioneer.id was present; expected {expected_id}. "
             "The response was rejected rather than stored under an unverified collection."
         )
-
 
 class ClearancePreconditionError(RuntimeError):
     pass

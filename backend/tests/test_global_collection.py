@@ -68,10 +68,10 @@ def test_global_collection_runs_all_sources_sequentially_and_continues_after_fai
         expected = [main.global_source_state_key(source) for source in main.GLOBAL_COLLECTION_SOURCES]
         state = main.collection_states["global"]
         assert calls == expected
-        assert len(calls) == 10
+        assert len(calls) == 11
         assert state["status"] == "completed_with_errors"
-        assert state["completed_sources"] == 10
-        assert state["successful_sources"] == 9
+        assert state["completed_sources"] == 11
+        assert state["successful_sources"] == 10
         assert state["overall_progress_percent"] == 100
         assert state["progress_percent"] == 100
         assert len(state["failed_sources"]) == 1
@@ -130,7 +130,7 @@ def test_global_collection_start_registers_background_job_and_reports_source_cou
         response = main.start_global_collection(background_tasks)
 
         assert response["status"] == "running"
-        assert response["total_sources"] == 10
+        assert response["total_sources"] == 11
         assert response["started_at"]
         assert len(background_tasks.tasks) == 1
         assert background_tasks.tasks[0].func is main.run_global_collection_job
@@ -191,11 +191,8 @@ def test_auction_batch_runs_selected_categories_in_order_and_reports_failures(
             expected = [
                 (owner, category)
                 for category in expected_categories
-                if category != "clearance"
                 for owner in expected_groups
             ]
-            if "clearance" in expected_categories:
-                expected.append(("shared", "clearance"))
             assert calls == expected
             assert started.json()["total_sources"] == len(expected)
             status = client.get("/api/collection/auctions/all/status", params={
@@ -228,7 +225,7 @@ def test_auction_batch_reservation_blocks_overlapping_work_before_first_source()
             main.start_global_collection(BackgroundTasks())
         with pytest.raises(HTTPException) as individual:
             main.start_auction_category_collection(
-                "clearance", BackgroundTasks(), db=None, collection_group="shared",
+                "clearance", BackgroundTasks(), db=None, collection_group="amval_tamliki",
             )
         assert duplicate.value.status_code == global_request.value.status_code == individual.value.status_code == 409
     finally:
