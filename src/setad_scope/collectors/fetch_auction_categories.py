@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import requests
 
@@ -200,7 +203,14 @@ def validate_source_context(rows: list[dict], source) -> None:
         )
 
 class ClearancePreconditionError(RuntimeError):
-    pass
+    def __init__(self, source: str, page: int, response=None):
+        self.source = source
+        self.page = page
+        self.response = response
+        self.diagnostic = (
+            f"{source}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر)"
+        )
+        super().__init__(self.diagnostic)
 
 
 def fetch_page(
@@ -218,7 +228,7 @@ def fetch_page(
             response = session.get(url, params=params, timeout=(20, 90))
             if source.adapter == "centralboard" and response.status_code == 428:
                 raise ClearancePreconditionError(
-                    f"{source.collection_group}/{category}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر)"
+                    f"{source.collection_group}/{category}", page, response
                 )
             response.raise_for_status()
             payload = response.json()
@@ -250,6 +260,108 @@ def _fetch_for_group(session, category: str, page: int, rows: int, collection_gr
     return fetch_page(session, category, page, rows, collection_group)
 
 
+CENTRALBOARD_RETRY_INITIAL_SECONDS = 240.0
+CENTRALBOARD_RETRY_MAX_SECONDS = 300.0
+
+
+def _retry_after_seconds(exc: ClearancePreconditionError) -> float:
+    response = exc.response
+    header = response.headers.get("Retry-After") if response is not None else None
+    if not header:
+        return 0.0
+    try:
+        return max(0.0, float(header))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(header)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+
+def _fetch_centralboard_page_with_wait(
+    session,
+    category: str,
+    page: int,
+    rows: int,
+    collection_group: str,
+    page_summaries: list[dict],
+    total_pages: int | None,
+    total_records: int | None,
+    retry_initial_seconds: float = CENTRALBOARD_RETRY_INITIAL_SECONDS,
+    retry_max_seconds: float = CENTRALBOARD_RETRY_MAX_SECONDS,
+):
+    retry_count = 0
+    while True:
+        try:
+            return _fetch_for_group(session, category, page, rows, collection_group)
+        except ClearancePreconditionError as exc:
+            retry_count += 1
+            initial = max(float(retry_initial_seconds), 0.0)
+            cap = max(float(retry_max_seconds), initial)
+            backoff = min(initial * (2 ** min(retry_count - 1, 10)), cap)
+            wait_seconds = max(backoff, _retry_after_seconds(exc))
+            now = time.time()
+            retry_at = now + wait_seconds
+            retry_id = uuid4().hex
+            signal_name = os.environ.get("SETADSCOPE_RETRY_SIGNAL")
+            completed = len(page_summaries)
+            records_fetched = sum(int(item.get("rows", 0)) for item in page_summaries)
+            progress_percent = int(
+                85 * completed / max(int(total_pages or 1), 1)
+            )
+            emit_progress(
+                collection_group=collection_group,
+                category=category,
+                phase="waiting_for_access",
+                current_page=completed + 1,
+                total_pages=total_pages,
+                pages_completed=completed,
+                records_fetched=records_fetched,
+                records_total=total_records,
+                progress_percent=progress_percent,
+                retry_count=retry_count,
+                retry_in_seconds=wait_seconds,
+                retry_at=retry_at,
+                manual_retry_at=now if signal_name else None,
+                retry_id=retry_id,
+                waiting_page=page,
+                message="در انتظار دریافت سری بعدی اطلاعات",
+            )
+            print(str(exc), file=sys.stderr, flush=True)
+
+            if signal_name:
+                signal = Path(signal_name)
+                deadline = time.monotonic() + wait_seconds
+                while time.monotonic() < deadline:
+                    try:
+                        if signal.read_text(encoding="utf-8") == retry_id:
+                            break
+                    except OSError:
+                        pass
+                    time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
+            else:
+                time.sleep(wait_seconds)
+
+            emit_progress(
+                collection_group=collection_group,
+                category=category,
+                phase="collecting",
+                current_page=completed + 1,
+                total_pages=total_pages,
+                pages_completed=completed,
+                records_fetched=records_fetched,
+                records_total=total_records,
+                progress_percent=progress_percent,
+                retry_at=None,
+                manual_retry_at=None,
+                retry_id=None,
+                message="در حال بررسی مجدد دسترسی به منبع...",
+            )
+
+
 def collect(
     category: str,
     start_page: int = 0,
@@ -259,6 +371,8 @@ def collect(
     raw_dir: Path | None = None,
     session: requests.Session | None = None,
     collection_group: str | None = None,
+    retry_initial_seconds: float = CENTRALBOARD_RETRY_INITIAL_SECONDS,
+    retry_max_seconds: float = CENTRALBOARD_RETRY_MAX_SECONDS,
 ) -> dict:
     group = resolve_collection_group(category, collection_group)
     source = source_for(category, group)
@@ -295,7 +409,14 @@ def collect(
     if isinstance(active_session, requests.Session):
         active_session.trust_env = False
         active_session.proxies.clear()
-    first = _fetch_for_group(active_session, category, start_page, rows, group)
+    if source.adapter == "centralboard":
+        first = _fetch_centralboard_page_with_wait(
+            active_session, category, start_page, rows, group,
+            page_summaries, None, None,
+            retry_initial_seconds, retry_max_seconds,
+        )
+    else:
+        first = _fetch_for_group(active_session, category, start_page, rows, group)
     total_pages, total_records = page_totals(first, category, rows, group)
     first_reported_page = reported_page(first, source.adapter)
     try:
@@ -320,7 +441,16 @@ def collect(
 
     try:
         for page in range(effective_start, last + 1):
-            payload = first if page == effective_start else _fetch_for_group(active_session, category, page, rows, group)
+            if page == effective_start:
+                payload = first
+            elif source.adapter == "centralboard":
+                payload = _fetch_centralboard_page_with_wait(
+                    active_session, category, page, rows, group,
+                    page_summaries, total_pages, total_records,
+                    retry_initial_seconds, retry_max_seconds,
+                )
+            else:
+                payload = _fetch_for_group(active_session, category, page, rows, group)
             if source.adapter == "eauc":
                 actual_page = payload.get("page")
                 if actual_page is not None and int(actual_page) != page:
