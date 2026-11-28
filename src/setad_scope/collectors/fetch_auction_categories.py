@@ -320,6 +320,23 @@ def _load_centralboard_checkpoint(path: Path, raw_dir: Path, identity: dict) -> 
         return None
 
 
+def _retry_after_seconds(exc: ClearancePreconditionError) -> float:
+    response = exc.response
+    header = response.headers.get("Retry-After") if response is not None else None
+    if not header:
+        return 0.0
+    try:
+        return max(0.0, float(header))
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(header)
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+
+
 def _wait_for_centralboard_retry(wait_seconds: float, signal_name: str | None, retry_id: str | None) -> None:
     if not signal_name or not retry_id:
         time.sleep(max(wait_seconds, 0.0))
