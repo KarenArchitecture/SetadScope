@@ -795,10 +795,7 @@ def collect(
     except (TypeError, ValueError):
         first_reported_page = start_page
 
-    if source.adapter == "centralboard":
-        effective_start = start_page
-        final_source_page = total_pages - 1
-    elif start_page == 0 and first_reported_page == 1:
+    if start_page == 0 and first_reported_page == 1:
         # EAUC accepts page=0 but returns the first page as page=1.
         effective_start = 1
         final_source_page = total_pages
