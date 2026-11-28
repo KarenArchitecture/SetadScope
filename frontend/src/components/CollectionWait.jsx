@@ -17,7 +17,7 @@ export default function CollectionWait({ state }) {
   const remaining = Math.max(0, Math.ceil(deadline - now));
   const retryId = state?.retry_id;
   const collectionGroup =
-    state?.collection_group || state?.retry_collection_group || "executive_agencies";
+    state?.retry_collection_group || state?.collection_group || "executive_agencies";
   const waiting = state?.status === "collecting"
     ? state.phase === "waiting_for_access"
     : state?.status === "running" && state.current_phase === "waiting_for_access";
