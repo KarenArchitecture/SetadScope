@@ -1669,37 +1669,3 @@
     transition: none;
   }
 }
-
-
-/* Central Board cooldown is a recoverable collection state, not a failure. */
-.collection-wait {
-  margin: 10px 0;
-  display: grid;
-  gap: 8px;
-}
-.collection-wait p {
-  margin: 0;
-  font-size: 0.85rem;
-}
-.collection-wait__controls {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  align-items: center;
-  justify-content: space-between;
-}
-.collection-wait__countdown {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-variant-numeric: tabular-nums;
-}
-.collection-wait__retry {
-  display: inline-flex;
-  gap: 6px;
-  align-items: center;
-}
-.collection-wait__retry:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
