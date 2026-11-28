@@ -140,64 +140,90 @@ Setad timestamps such as fromProposalDate, toProposalDate, fromSiteShowDate, toS
 ## Auction categories and collection groups (November 2026)
 
 The auction workspace separates the owning collection from the listing category.
-The two owning collections each have four EAUC categories and independent collection
-jobs, progress, histories and stored identities. The Central Board clearance feed is
-a third, shared source and is collected only once. The old `setad_main_estate`
-records remain in `auctions`, classified as `movable` by migration 0005.
+Both owning collections have five categories: four EAUC listing families and one
+independent Central Board clearance source. There is no shared clearance group.
 
-| Category | Source | Source ID | Amount |
+| Collection group | Category | Source | Request / parameters |
 | --- | --- | --- | --- |
-| movable | eauc mainEstate-Load | auctionParty.id | baseTotalPrice |
-| immovable | eauc mainImmovable-Load | row.id | organizationBasePrice |
-| rental | eauc mainRental-Load | row.id | rentBasePrice |
-| minor | eauc mainMinor-Load | row.id | totalBasePrice |
-| clearance | gw centralboard/cards | cartId | basePrice (IRR) |
+| executive_agencies | movable | EAUC | `mainEstate-Load.action` |
+| executive_agencies | immovable | EAUC | `mainImmovable-Load.action` |
+| executive_agencies | rental | EAUC | `mainRental-Load.action` |
+| executive_agencies | minor | EAUC | `mainMinor-Load.action` |
+| executive_agencies | clearance | Central Board | `tagCode=341,343&notOrgId=5315` |
+| amval_tamliki | movable | EAUC | `mainEstate-Load.action` |
+| amval_tamliki | immovable | EAUC | `mainImmovable-Load.action` |
+| amval_tamliki | rental | EAUC | `mainRental-Load.action` |
+| amval_tamliki | minor | EAUC | `mainMinor-Load.action` |
+| amval_tamliki | clearance | Central Board | `tagCode=342&selectedOrganization=5315` |
 
-The Central Board clearance feed is a **shared source**. Both observed UI contexts use the same request with `tagCode=341,343` and the same response shape, so SetadScope collects it once under `collection_group=shared`. It is not duplicated under either owning collection. The previous 5315-scoped records are preserved and reclassified by Alembic revision 0010. Live access and pagination still require verification on the target network.
+The two Central Board requests use
+`https://gw.setadiran.ir/api/centralboard/cards/` and the same pagination and
+response adapter. Their ownership filters are different:
+- Executive agencies: `tagCode=341,343` and `notOrgId=5315` (exclude Amval Tamliki).
+- Amval Tamliki: `tagCode=342` and `selectedOrganization=5315`.
 
-The database keeps **all fetched records**, matching or not. `has_keyword_match` and
-`matched_keywords` are derived metadata; the dashboard shows only matched items by
-default with an explicit toggle to view all. An unmatched auction does not get
-discarded, so future AI models can reclassify it without scraping it again.
+The Amval collector verifies that every returned card has `orgId=5315` before
+saving the page. A missing or mismatched organization ID rejects the response,
+preventing records from leaking into the wrong collection. The four EAUC
+categories continue to use their own gateway session contexts:
+`gateway=setad` for executive agencies and `gateway=amvalTamliki` for Amval.
 
-Each category uses its own stable source identity: `(source, source_party_id)`.
-In particular, rental entries can share `auctionNo` but must not share the row
-identity. Upsert preserves the original first-seen timestamp and updates the raw
-JSONB and normalized columns.
+Each group has its own collector invocation, raw snapshot directory, progress,
+ingestion history and database identity. For example, clearance snapshots are
+stored under `data/raw/auctions/clearance` for executive agencies and
+`data/raw/auctions/amval_tamliki/clearance` for Amval Tamliki.
+
+Alembic revision `0012` reclassifies historical Central Board rows that were
+previously placed in the incorrect shared scope. Rows with `orgId=5315`,
+`tagCode=342`, or the Amval organization name move to Amval; remaining
+historical shared rows move to executive agencies. Raw JSONB payloads and
+first-seen timestamps are preserved. Historical ingestion-run entries that
+cannot be tied to individual cards are retained under the executive collection
+as the legacy default.
+
+The database keeps **all fetched records**, matching or not. `has_keyword_match`
+and `matched_keywords` are derived metadata; the dashboard shows only matched
+items by default with an explicit toggle to view all. An unmatched auction does
+not get discarded, so future AI models can reclassify it without scraping it
+again.
+
+Auction row identity is `(collection_group, source, source_party_id)`. This
+keeps the same card ID independent when it appears in different owner scopes.
+Upsert preserves the original first-seen timestamp and updates the raw JSONB
+and normalized columns.
 
 To run a complete category fetch and import in PowerShell:
 
 ```powershell
-.\setad.ps1 collect-category -Category movable -Group executive_agencies
-.\setad.ps1 collect-category -Category immovable -Group executive_agencies
+.\setad.ps1 collect-category -Category clearance -Group executive_agencies
+.\setad.ps1 collect-category -Category clearance -Group amval_tamliki
 .\setad.ps1 collect-category -Category movable -Group amval_tamliki
 .\setad.ps1 collect-category -Category rental -Group amval_tamliki
-.\setad.ps1 collect-category -Category clearance -Group shared
 ```
 
-Or use each category's **جمع‌آوری** button. Both CLI and UI use server-reported page counts. The first request follows
-the captured browser behavior (page 0). Four older eauc endpoints report
-`"page": 1` for that request, so the collector records it as page 1, then
-requests pages 2 through the reported total, avoiding duplicate first pages
-and missing final pages. The central-board endpoint uses genuine zero-based
-`pageNumber` values. Subsequent eauc page numbers are checked for consistency.
-The old `.\setad.ps1 collect` alias now runs the full movable collection.
-`.\setad.ps1 collect-tenders` remains unchanged.
+Or use the **جمع‌آوری داده** button in the matching collection/category view.
+Selecting both collections with the clearance category runs two independent
+sources in sequence; it never treats them as one shared feed.
 
-The importer reads only the most recent *completed* category-run manifest.
-Partially fetched snapshots are retained for diagnosis but are not imported.
+The collector follows server-reported page counts. The first EAUC request uses
+page 0, while the response reports page 1; the collector records it as page 1
+and then requests pages 2 through the reported total. Central Board uses
+zero-based `pageNumber` values and a default page size of five. Partial
+Central Board snapshots are retained for diagnosis and imported as failed,
+incomplete runs rather than being marked successful.
 
-Auction API additions:
-- `GET /api/auctions?category=movable&matched_only=true`
-- `GET /api/auctions?category=rental&matched_only=false`
-- `GET /api/auctions/export.xlsx?category=clearance&matched_only=false`
-- `POST /api/collection/auctions/{category}/run`
-- `GET /api/collection/auctions/{category}/status`
+Auction API examples:
+- `GET /api/auctions?category=clearance&collection_group=executive_agencies`
+- `GET /api/auctions?category=clearance&collection_group=amval_tamliki`
+- `GET /api/auctions?category=clearance&collection_group=all`
+- `GET /api/auctions/export.xlsx?category=clearance&collection_group=amval_tamliki`
+- `POST /api/collection/auctions/clearance/run?collection_group=amval_tamliki`
+- `GET /api/collection/auctions/clearance/status?collection_group=amval_tamliki`
+- `GET /api/collection/auctions/history?collection_group=amval_tamliki`
 
-All previous auction list / export parameters (search, status, dates, province,
-city, sort) remain available. Price filtering applies **within** the chosen
-category; rental base and sale base should not be compared as the same concept.
-Only the central-board clearance response explicitly labels its currency IRR.
+The old `.\setad.ps1 collect` alias remains the movable executive-agency
+collection. `.\setad.ps1 collect-tenders` remains unchanged.
+
 
 The Persian calendar year display uses `useGrouping: false` so ۱۴۰۵ is not
 rendered as ۱٬۴۰۵.

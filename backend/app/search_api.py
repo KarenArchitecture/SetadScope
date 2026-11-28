@@ -5,7 +5,7 @@ from datetime import datetime, timezone
 from decimal import Decimal
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from sqlalchemy import func, or_, select, union_all
 from sqlalchemy.orm import Session
 
@@ -24,15 +24,15 @@ AUCTION_CATEGORIES = {
     "immovable": "غیرمنقول",
     "rental": "اجاره",
     "minor": "جزئی",
-    "clearance": "حراج مشترک",
+    "clearance": "حراج",
 }
 SOURCE_LABELS = {
     "setad_main_estate": "سامانه مزایده ستاد · منقول",
     "setad_immovable": "سامانه مزایده ستاد · غیرمنقول",
     "setad_rental": "سامانه مزایده ستاد · اجاره",
     "setad_minor": "سامانه مزایده ستاد · جزئی",
-    "setad_clearance_5315": "سامانه حراج اموال تملیکی (قدیمی)",
-    "setad_clearance_shared": "سامانه حراج مشترک ستاد",
+    "setad_clearance_executive_agencies": "سامانه حراج دستگاه‌های اجرایی",
+    "setad_clearance_amval_tamliki": "سامانه حراج اموال تملیکی",
     "setad_tender": "سامانه مناقصات ستاد",
 }
 SORT_COLUMNS = {
@@ -141,7 +141,7 @@ def global_search(
     city: str | None = None,
     status: Literal["all", "active", "archive"] = "all",
     matched_only: bool = False,
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
     page: int = Query(1, ge=1),
@@ -224,12 +224,11 @@ def global_search(
         item["collection_group_label"] = {
             "executive_agencies": "دستگاه‌های اجرایی",
             "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
-            "shared": "حراج مشترک ستاد",
         }.get(item.get("collection_group"), "—")
         if item.get("collection_group") == "amval_tamliki":
             item["source_label"] = (
                 "سامانه حراج اموال تملیکی"
-                if item["source"] == "setad_clearance_5315"
+                if item["source"] == "setad_clearance_amval_tamliki"
                 else "سامانه مزایده اموال تملیکی"
             )
         else:
@@ -269,13 +268,13 @@ def global_search(
             "collection_groups": [
                 {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
                 {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
-                {"value": "shared", "label": "حراج مشترک ستاد"},
             ],
         },
     }
 
 
 @router.get("/api/search/export.xlsx")
+@router.post("/api/search/export.xlsx")
 def export_global_search(
     search: str | None = None,
     kind: str = "all",
@@ -285,9 +284,10 @@ def export_global_search(
     city: str | None = None,
     status: Literal["all", "active", "archive"] = "all",
     matched_only: bool = False,
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     sort_by: str = Query("announcement_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    selected_records: list[str] | None = Body(default=None, embed=True),
     advanced: AdvancedSearchFilters = Depends(),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
@@ -302,12 +302,26 @@ def export_global_search(
         except ValueError as exc:
             raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    rows = _searchable_rows(
-        search, source, province, city, category, status, matched_only, collection_group,
-    )
-    query = select(rows).where(*advanced.conditions(rows))
-    if kind != "all":
-        query = query.where(rows.c.record_type == kind)
+    if selected_records:
+        rows = _searchable_rows(None, None, None, None, None, "all", False, "all")
+        conditions = []
+        for record in set(selected_records):
+            try:
+                record_type, raw_id = record.split(":", 1)
+                record_id = int(raw_id)
+            except (AttributeError, ValueError) as exc:
+                raise HTTPException(status_code=422, detail="Invalid selected record") from exc
+            if record_type not in LISTING_TYPES:
+                raise HTTPException(status_code=422, detail="Unsupported selected record type")
+            conditions.append((rows.c.record_type == record_type) & (rows.c.record_id == record_id))
+        query = select(rows).where(or_(*conditions))
+    else:
+        rows = _searchable_rows(
+            search, source, province, city, category, status, matched_only, collection_group,
+        )
+        query = select(rows).where(*advanced.conditions(rows))
+        if kind != "all":
+            query = query.where(rows.c.record_type == kind)
 
     column = rows.c[SORT_COLUMNS[sort_by]]
     if sort_by == "category":
@@ -318,7 +332,6 @@ def export_global_search(
     group_labels = {
         "executive_agencies": "دستگاه‌های اجرایی",
         "amval_tamliki": "سازمان جمع‌آوری و فروش اموال تملیکی",
-        "shared": "حراج مشترک ستاد",
     }
 
     headers = [
@@ -332,7 +345,7 @@ def export_global_search(
         for row in db.execute(query).mappings().yield_per(500):
             record_type = row["record_type"]
             source_label = SOURCE_LABELS.get(row["source"], row["source"])
-            if row.get("collection_group") == "amval_tamliki" and row["source"] == "setad_clearance_5315":
+            if row.get("collection_group") == "amval_tamliki" and row["source"] == "setad_clearance_amval_tamliki":
                 source_label = "سامانه حراج اموال تملیکی"
 
             announcement_at = row["announcement_at"]

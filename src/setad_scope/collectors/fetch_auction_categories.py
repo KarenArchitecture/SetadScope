@@ -7,10 +7,10 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
-from uuid import uuid4
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import requests
 
@@ -81,7 +81,10 @@ def request_details(
     url = source.base_url + source.path
     params = dict(source.fixed_params)
     if source.adapter == "centralboard":
+        sort = params.pop("sort", None)
         params.update({"pageNumber": page, "pageSize": rows})
+        if sort is not None:
+            params["sort"] = sort
     else:
         stamp = int(time.time() * 1000)
         params.update({
@@ -117,9 +120,54 @@ def _record_auctioneer_id(record: dict, category: str):
 
 
 def validate_source_context(rows: list[dict], source) -> None:
-    """Reject a snapshot if EAUC's session context returned another organization."""
+    """Reject a response when its records do not belong to the configured owner."""
+    if not rows:
+        return
+
+    expected_organization_id = source.expected_organization_id
+    if expected_organization_id is not None:
+        observed_ids = []
+        missing_rows = []
+        mismatches = []
+        for row_number, record in enumerate(rows, start=1):
+            if not isinstance(record, dict) or record.get("orgId") is None:
+                missing_rows.append(row_number)
+                continue
+            actual_id = str(record["orgId"])
+            observed_ids.append(actual_id)
+            if actual_id != str(expected_organization_id):
+                mismatches.append((row_number, actual_id))
+
+        if mismatches:
+            examples = ", ".join(
+                f"row {row_number}: orgId={actual_id}"
+                for row_number, actual_id in mismatches[:5]
+            )
+            unexpected_ids = ", ".join(sorted({actual_id for _, actual_id in mismatches}))
+            raise SourceContextMismatch(
+                f"Central Board source context mismatch for "
+                f"{source.collection_group}/{source.category}: "
+                f"expected orgId={expected_organization_id}, received {unexpected_ids} "
+                f"({examples}). The response was rejected to prevent cross-collection contamination."
+            )
+        if missing_rows:
+            examples = ", ".join(str(row_number) for row_number in missing_rows[:5])
+            raise SourceContextMismatch(
+                f"Cannot verify Central Board source context for "
+                f"{source.collection_group}/{source.category}: orgId is missing in row(s) "
+                f"{examples}; expected {expected_organization_id}. "
+                "The response was rejected rather than stored under an unverified collection."
+            )
+        if not observed_ids:
+            raise SourceContextMismatch(
+                f"Cannot verify Central Board source context for "
+                f"{source.collection_group}/{source.category}: no orgId was present; "
+                f"expected {expected_organization_id}."
+            )
+        return
+
     expected_id = source.expected_auctioneer_id
-    if expected_id is None or not rows:
+    if expected_id is None:
         return
 
     observed_ids = []
@@ -154,58 +202,15 @@ def validate_source_context(rows: list[dict], source) -> None:
             "The response was rejected rather than stored under an unverified collection."
         )
 
-
-def _centralboard_response_diagnostic(response, page: int) -> dict[str, Any]:
-    """Capture safe, useful diagnostics for a Central Board HTTP failure."""
-    allowed_headers = {
-        "content-type", "content-length", "date", "server", "retry-after",
-        "via", "x-request-id", "x-correlation-id", "cf-ray", "x-cache",
-        "x-envoy-upstream-service-time", "request-id", "traceparent",
-    }
-    response_headers = getattr(response, "headers", {}) or {}
-    selected_headers = {
-        str(name): str(value)
-        for name, value in response_headers.items()
-        if str(name).lower() in allowed_headers
-        or str(name).lower().startswith(("x-ratelimit-", "x-rate-limit-"))
-    }
-    try:
-        body = response.text or ""
-    except Exception:
-        body = "<response body unavailable>"
-    request = getattr(response, "request", None)
-    request_headers = getattr(request, "headers", {}) or {}
-    elapsed = getattr(response, "elapsed", None)
-    try:
-        elapsed_ms = int(elapsed.total_seconds() * 1000) if elapsed is not None else None
-    except (AttributeError, TypeError, ValueError):
-        elapsed_ms = None
-    return {
-        "status_code": getattr(response, "status_code", None),
-        "page_number": page,
-        "page_number_base": 0,
-        "url": getattr(response, "url", None),
-        "elapsed_ms": elapsed_ms,
-        "response_headers": selected_headers,
-        # Header names only: never persist Cookie or Authorization values.
-        "request_header_names": sorted(str(name) for name in request_headers.keys()),
-        "body_preview": body[:2000],
-    }
-
-
 class ClearancePreconditionError(RuntimeError):
-    def __init__(self, source_key: str, page: int, response):
-        self.diagnostic = _centralboard_response_diagnostic(response, page)
-        headers = self.diagnostic["response_headers"]
-        header_summary = ", ".join(f"{key}={value}" for key, value in headers.items())
-        body_summary = " ".join(self.diagnostic["body_preview"].split())[:500]
-        super().__init__(
-            f"{source_key}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر); "
-            f"elapsed_ms={self.diagnostic['elapsed_ms']}; "
-            f"headers=[{header_summary or 'none'}]; "
-            f"request_headers={','.join(self.diagnostic['request_header_names']) or 'unknown'}; "
-            f"body={body_summary!r}"
+    def __init__(self, source: str, page: int, response=None):
+        self.source = source
+        self.page = page
+        self.response = response
+        self.diagnostic = (
+            f"{source}: HTTP 428 در صفحهٔ {page} (شماره‌گذاری از صفر)"
         )
+        super().__init__(self.diagnostic)
 
 
 def fetch_page(
@@ -255,173 +260,58 @@ def _fetch_for_group(session, category: str, page: int, rows: int, collection_gr
     return fetch_page(session, category, page, rows, collection_group)
 
 
-
-
 CENTRALBOARD_RETRY_INITIAL_SECONDS = 240.0
 CENTRALBOARD_RETRY_MAX_SECONDS = 300.0
-CENTRALBOARD_CHECKPOINT_VERSION = 1
 
 
-def _write_json_atomically(path: Path, payload: dict) -> None:
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_text(
-        json.dumps(payload, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    temporary.replace(path)
-
-
-def _centralboard_checkpoint_identity(source, rows: int) -> dict:
-    return {
-        "version": CENTRALBOARD_CHECKPOINT_VERSION,
-        "collection_group": source.collection_group,
-        "category": source.category,
-        "source": source.source,
-        "adapter": source.adapter,
-        "base_url": source.base_url,
-        "path": source.path,
-        "fixed_params": [[key, value] for key, value in source.fixed_params],
-        "rows": rows,
-    }
-
-
-def _load_centralboard_checkpoint(path: Path, raw_dir: Path, identity: dict) -> dict | None:
-    if not path.is_file():
-        return None
+def _retry_after_seconds(exc: ClearancePreconditionError) -> float:
+    response = exc.response
+    header = response.headers.get("Retry-After") if response is not None else None
+    if not header:
+        return 0.0
     try:
-        checkpoint = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(checkpoint, dict):
-            return None
-        if any(checkpoint.get(key) != value for key, value in identity.items()):
-            return None
-        if checkpoint.get("status") not in {"collecting", "waiting", "interrupted", "partial"}:
-            return None
-        if not isinstance(checkpoint.get("stamp"), str):
-            return None
-        if not isinstance(checkpoint.get("next_page"), int) or checkpoint["next_page"] < 0:
-            return None
-        if checkpoint.get("total_pages") is not None and checkpoint["next_page"] > int(checkpoint["total_pages"]):
-            return None
-        pages = checkpoint.get("pages")
-        if not isinstance(pages, list):
-            return None
-        for item in pages:
-            if not isinstance(item, dict) or not item.get("file"):
-                return None
-            filename = Path(str(item["file"])).name
-            if not filename or not (raw_dir / filename).is_file():
-                return None
-        return checkpoint
-    except (OSError, ValueError, TypeError, json.JSONDecodeError):
-        return None
-
-
-def _retry_after_seconds(error: ClearancePreconditionError) -> float | None:
-    headers = error.diagnostic.get("response_headers", {})
-    value = next(
-        (str(item) for key, item in headers.items() if str(key).lower() == "retry-after"),
-        None,
-    )
-    if not value:
-        return None
-    try:
-        return max(1.0, float(value.strip()))
+        return max(0.0, float(header))
     except (TypeError, ValueError):
         try:
-            retry_at = parsedate_to_datetime(value)
+            retry_at = parsedate_to_datetime(header)
             if retry_at.tzinfo is None:
                 retry_at = retry_at.replace(tzinfo=timezone.utc)
-            return max(1.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
+            return max(0.0, (retry_at - datetime.now(timezone.utc)).total_seconds())
         except (TypeError, ValueError, OverflowError):
-            return None
+            return 0.0
 
 
 def _fetch_centralboard_page_with_wait(
-    session: requests.Session,
+    session,
     category: str,
     page: int,
     rows: int,
     collection_group: str,
-    checkpoint: dict,
-    checkpoint_path: Path,
     page_summaries: list[dict],
     total_pages: int | None,
     total_records: int | None,
-    retry_initial_seconds: float,
-    retry_max_seconds: float,
-) -> dict:
-    retry_count = int(checkpoint.get("retry_count", 0) or 0)
-    # Preserve a pending cooldown even if the backend was restarted.
-    if checkpoint.get("status") == "waiting" and checkpoint.get("waiting_page") == page:
-        remaining = max(0.0, float(checkpoint.get("retry_at") or 0) - time.time())
-        if remaining:
-            emit_progress(
-                collection_group=collection_group, category=category,
-                phase="waiting_for_access", current_page=len(page_summaries),
-                total_pages=total_pages, pages_completed=len(page_summaries),
-                records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
-                records_total=total_records,
-                progress_percent=int(85 * len(page_summaries) / max(int(total_pages or 1), 1)),
-                retry_at=checkpoint["retry_at"], retry_in_seconds=remaining,
-                waiting_page=page,
-                message="در انتظار دریافت سری بعدی اطلاعات",
-            )
-            time.sleep(remaining)
+    retry_initial_seconds: float = CENTRALBOARD_RETRY_INITIAL_SECONDS,
+    retry_max_seconds: float = CENTRALBOARD_RETRY_MAX_SECONDS,
+):
+    retry_count = 0
     while True:
         try:
-            payload = _fetch_for_group(session, category, page, rows, collection_group)
-            if checkpoint.get("status") == "waiting":
-                checkpoint.update({
-                    "status": "collecting",
-                    "waiting_page": None,
-                    "retry_count": 0,
-                    "last_error": None,
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
-                })
-                _write_json_atomically(checkpoint_path, checkpoint)
-                emit_progress(
-                    collection_group=collection_group,
-                    category=category,
-                    phase="collecting",
-                    current_page=len(page_summaries) + 1,
-                    total_pages=total_pages,
-                    pages_completed=len(page_summaries),
-                    records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
-                    records_total=total_records,
-                    progress_percent=int(
-                        85 * len(page_summaries) / max(int(total_pages or 1), 1)
-                    ),
-                    message=f"دسترسی به منبع برقرار شد؛ ادامه دریافت از صفحه {page}.",
-                )
-            return payload
+            return _fetch_for_group(session, category, page, rows, collection_group)
         except ClearancePreconditionError as exc:
             retry_count += 1
-            retry_after = _retry_after_seconds(exc)
             initial = max(float(retry_initial_seconds), 0.0)
             cap = max(float(retry_max_seconds), initial)
             backoff = min(initial * (2 ** min(retry_count - 1, 10)), cap)
-            # A Retry-After may lengthen, but never shorten, the local cooldown.
-            minimum_wait = max(initial, retry_after or 0.0)
-            wait_seconds = max(backoff, minimum_wait)
+            wait_seconds = max(backoff, _retry_after_seconds(exc))
             now = time.time()
             retry_at = now + wait_seconds
-            # Manual probes are intentionally available immediately. The normal
-            # automatic retry still waits for wait_seconds unless the user asks
-            # for an earlier check from the UI.
-            manual_at = now
             retry_id = uuid4().hex
             signal_name = os.environ.get("SETADSCOPE_RETRY_SIGNAL")
-            checkpoint.update({
-                "status": "waiting",
-                "waiting_page": page,
-                "retry_count": retry_count,
-                "last_retry_delay_seconds": wait_seconds,
-                "retry_at": retry_at,
-                "last_error": exc.diagnostic,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            _write_json_atomically(checkpoint_path, checkpoint)
             completed = len(page_summaries)
+            records_fetched = sum(int(item.get("rows", 0)) for item in page_summaries)
+            progress_percent = int(
+                85 * completed / max(int(total_pages or 1), 1)
+            )
             emit_progress(
                 collection_group=collection_group,
                 category=category,
@@ -429,25 +319,20 @@ def _fetch_centralboard_page_with_wait(
                 current_page=completed + 1,
                 total_pages=total_pages,
                 pages_completed=completed,
-                records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
+                records_fetched=records_fetched,
                 records_total=total_records,
-                progress_percent=int(85 * completed / max(int(total_pages or 1), 1)),
+                progress_percent=progress_percent,
                 retry_count=retry_count,
                 retry_in_seconds=wait_seconds,
                 retry_at=retry_at,
-                manual_retry_at=manual_at if signal_name else None,
+                manual_retry_at=now if signal_name else None,
                 retry_id=retry_id,
                 waiting_page=page,
                 message="در انتظار دریافت سری بعدی اطلاعات",
             )
-            # Keep the diagnostic in the backend log; it is not a user-facing failure.
             print(str(exc), file=sys.stderr, flush=True)
-            if not signal_name:
-                time.sleep(wait_seconds)
-            else:
-                # Watch for a user-requested early probe throughout the entire
-                # cooldown. Without a manual signal, retry automatically at
-                # the scheduled deadline.
+
+            if signal_name:
                 signal = Path(signal_name)
                 deadline = time.monotonic() + wait_seconds
                 while time.monotonic() < deadline:
@@ -457,231 +342,24 @@ def _fetch_centralboard_page_with_wait(
                     except OSError:
                         pass
                     time.sleep(min(1.0, max(0.0, deadline - time.monotonic())))
-            emit_progress(
-                collection_group=collection_group, category=category,
-                phase="collecting", current_page=completed + 1,
-                total_pages=total_pages, pages_completed=completed,
-                records_fetched=sum(int(item.get("rows", 0)) for item in page_summaries),
-                records_total=total_records,
-                progress_percent=int(85 * completed / max(int(total_pages or 1), 1)),
-                message="در حال دریافت سری بعدی اطلاعات...",
-            )
-
-
-def _collect_centralboard(
-    session: requests.Session,
-    category: str,
-    start_page: int,
-    end_page: int | None,
-    rows: int,
-    delay: float,
-    raw_dir: Path,
-    source,
-    retry_initial_seconds: float,
-    retry_max_seconds: float,
-    resume: bool,
-) -> dict:
-    group = source.collection_group
-    raw_dir.mkdir(parents=True, exist_ok=True)
-    checkpoint_path = raw_dir / f"{category}_checkpoint.json"
-    identity = _centralboard_checkpoint_identity(source, rows)
-    checkpoint = (
-        _load_centralboard_checkpoint(checkpoint_path, raw_dir, identity)
-        if resume and start_page == 0
-        else None
-    )
-    resumed = checkpoint is not None
-
-    if checkpoint:
-        stamp = checkpoint["stamp"]
-        page_summaries = list(checkpoint["pages"])
-        total_fetched = sum(int(item.get("rows", 0)) for item in page_summaries)
-        total_pages = checkpoint.get("total_pages")
-        total_records = checkpoint.get("total_records")
-        effective_start = int(checkpoint["next_page"])
-        first_payload = None
-        emit_progress(
-            collection_group=group,
-            category=category,
-            phase="resuming",
-            current_page=len(page_summaries),
-            total_pages=total_pages,
-            pages_completed=len(page_summaries),
-            records_fetched=total_fetched,
-            records_total=total_records,
-            progress_percent=int(85 * len(page_summaries) / max(int(total_pages or 1), 1)),
-            message=f"نقطه ذخیره‌شده پیدا شد؛ ادامه دریافت از صفحه {effective_start}.",
-        )
-    else:
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-        page_summaries = []
-        total_fetched = 0
-        total_pages = None
-        total_records = None
-        effective_start = start_page
-        first_payload = None
-        checkpoint = {
-            **identity,
-            "stamp": stamp,
-            "started_at": datetime.now(timezone.utc).isoformat(),
-            "status": "collecting",
-            "next_page": start_page,
-            "waiting_page": None,
-            "retry_count": 0,
-            "total_pages": None,
-            "total_records": None,
-            "pages": [],
-        }
-        _write_json_atomically(checkpoint_path, checkpoint)
-
-    summary_path = raw_dir / f"{category}_run_{stamp}.json"
-
-    try:
-        if total_pages is None:
-            first_payload = _fetch_centralboard_page_with_wait(
-                session, category, effective_start, rows, group,
-                checkpoint, checkpoint_path, page_summaries,
-                total_pages, total_records,
-                retry_initial_seconds, retry_max_seconds,
-            )
-            total_pages, total_records = page_totals(
-                first_payload, category, rows, group,
-            )
-            checkpoint.update({
-                "total_pages": total_pages,
-                "total_records": total_records,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            _write_json_atomically(checkpoint_path, checkpoint)
-
-        final_source_page = total_pages - 1
-        last = min(end_page if end_page is not None else final_source_page, final_source_page)
-        if effective_start > last and not page_summaries:
-            raise ValueError(
-                f"start_page {effective_start} exceeds the last page {final_source_page}"
-            )
-
-        for page in range(effective_start, last + 1):
-            if page == effective_start and first_payload is not None:
-                payload = first_payload
             else:
-                payload = _fetch_centralboard_page_with_wait(
-                    session, category, page, rows, group,
-                    checkpoint, checkpoint_path, page_summaries,
-                    total_pages, total_records,
-                    retry_initial_seconds, retry_max_seconds,
-                )
+                time.sleep(wait_seconds)
 
-            items = extract_rows(payload, source.adapter)
-            page_path = raw_dir / f"{category}_page_{page}_{stamp}.json"
-            page_path.write_text(
-                json.dumps(payload, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            total_fetched += len(items)
-            page_summaries.append({
-                "page": page,
-                "file": (
-                    str(page_path.relative_to(PROJECT_ROOT))
-                    if page_path.is_relative_to(PROJECT_ROOT)
-                    else str(page_path)
-                ),
-                "rows": len(items),
-            })
-
-            checkpoint.update({
-                "status": "collecting",
-                "next_page": page + 1,
-                "waiting_page": None,
-                "retry_count": 0,
-                "total_pages": total_pages,
-                "total_records": total_records,
-                "rows_saved": total_fetched,
-                "pages": page_summaries,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            _write_json_atomically(checkpoint_path, checkpoint)
-
-            completed = len(page_summaries)
             emit_progress(
-                collection_group=group,
+                collection_group=collection_group,
                 category=category,
                 phase="collecting",
-                current_page=completed,
+                current_page=completed + 1,
                 total_pages=total_pages,
                 pages_completed=completed,
-                records_fetched=total_fetched,
+                records_fetched=records_fetched,
                 records_total=total_records,
-                progress_percent=int(85 * completed / max(total_pages, 1)),
-                message=f"دریافت {completed} از {total_pages} صفحه {group}/{category}",
+                progress_percent=progress_percent,
+                retry_at=None,
+                manual_retry_at=None,
+                retry_id=None,
+                message="در حال بررسی مجدد دسترسی به منبع...",
             )
-            if page < last and delay:
-                time.sleep(delay)
-
-        complete_source = (
-            start_page == 0
-            and last == final_source_page
-            and len(page_summaries) >= total_pages
-        )
-        summary = {
-            "collection_group": group,
-            "category": category,
-            "source": source.source,
-            "started_at": stamp,
-            "total_pages_reported": total_pages,
-            "total_records_reported": total_records,
-            "rows_saved": total_fetched,
-            "pages": page_summaries,
-            "complete_source": complete_source,
-            "source_page_base": 0,
-            "resumed": resumed,
-        }
-        summary_path.write_text(
-            json.dumps(summary, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        if complete_source:
-            checkpoint_path.unlink(missing_ok=True)
-        else:
-            checkpoint.update({
-                "status": "partial",
-                "next_page": last + 1,
-                "pages": page_summaries,
-                "rows_saved": total_fetched,
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            })
-            _write_json_atomically(checkpoint_path, checkpoint)
-
-        print(
-            f"FETCH SUCCESS {group}/{category}: "
-            f"{total_fetched} records in {len(page_summaries)} pages",
-            flush=True,
-        )
-        return summary
-    except Exception as exc:
-        checkpoint.update({
-            "status": "interrupted",
-            "next_page": int(checkpoint.get("next_page", effective_start)),
-            "pages": page_summaries,
-            "rows_saved": total_fetched,
-            "last_error": str(exc)[:2000],
-            "updated_at": datetime.now(timezone.utc).isoformat(),
-        })
-        _write_json_atomically(checkpoint_path, checkpoint)
-        if page_summaries:
-            partial_path = raw_dir / f"{category}_partial_{stamp}.json"
-            partial_path.write_text(
-                json.dumps({
-                    "collection_group": group,
-                    "category": category,
-                    "complete_source": False,
-                    "pages": page_summaries,
-                    "error": str(exc)[:2000],
-                }, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            print("PARTIAL_MANIFEST:" + partial_path.name, flush=True)
-        raise
 
 
 def collect(
@@ -695,7 +373,6 @@ def collect(
     collection_group: str | None = None,
     retry_initial_seconds: float = CENTRALBOARD_RETRY_INITIAL_SECONDS,
     retry_max_seconds: float = CENTRALBOARD_RETRY_MAX_SECONDS,
-    resume: bool = True,
 ) -> dict:
     group = resolve_collection_group(category, collection_group)
     source = source_for(category, group)
@@ -708,6 +385,12 @@ def collect(
         raise ValueError("rows must be between 1 and 100")
     raw_dir = raw_dir or category_raw_dir(group, category)
     raw_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    summary_path = raw_dir / f"{category}_run_{stamp}.json"
+    page_summaries = []
+    total_fetched = 0
+    total_records = None
+    total_pages = None
 
     emit_progress(
         collection_group=group,
@@ -726,30 +409,14 @@ def collect(
     if isinstance(active_session, requests.Session):
         active_session.trust_env = False
         active_session.proxies.clear()
-
     if source.adapter == "centralboard":
-        return _collect_centralboard(
-            active_session,
-            category,
-            start_page,
-            end_page,
-            rows,
-            delay,
-            raw_dir,
-            source,
-            retry_initial_seconds,
-            retry_max_seconds,
-            resume,
+        first = _fetch_centralboard_page_with_wait(
+            active_session, category, start_page, rows, group,
+            page_summaries, None, None,
+            retry_initial_seconds, retry_max_seconds,
         )
-
-    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
-    summary_path = raw_dir / f"{category}_run_{stamp}.json"
-    page_summaries = []
-    total_fetched = 0
-    total_records = None
-    total_pages = None
-
-    first = _fetch_for_group(active_session, category, start_page, rows, group)
+    else:
+        first = _fetch_for_group(active_session, category, start_page, rows, group)
     total_pages, total_records = page_totals(first, category, rows, group)
     first_reported_page = reported_page(first, source.adapter)
     try:
@@ -757,7 +424,10 @@ def collect(
     except (TypeError, ValueError):
         first_reported_page = start_page
 
-    if start_page == 0 and first_reported_page == 1:
+    if source.adapter == "centralboard":
+        effective_start = start_page
+        final_source_page = total_pages - 1
+    elif start_page == 0 and first_reported_page == 1:
         # EAUC accepts page=0 but returns the first page as page=1.
         effective_start = 1
         final_source_page = total_pages
@@ -771,9 +441,16 @@ def collect(
 
     try:
         for page in range(effective_start, last + 1):
-            payload = first if page == effective_start else _fetch_for_group(
-                active_session, category, page, rows, group
-            )
+            if page == effective_start:
+                payload = first
+            elif source.adapter == "centralboard":
+                payload = _fetch_centralboard_page_with_wait(
+                    active_session, category, page, rows, group,
+                    page_summaries, total_pages, total_records,
+                    retry_initial_seconds, retry_max_seconds,
+                )
+            else:
+                payload = _fetch_for_group(active_session, category, page, rows, group)
             if source.adapter == "eauc":
                 actual_page = payload.get("page")
                 if actual_page is not None and int(actual_page) != page:
@@ -821,10 +498,19 @@ def collect(
         summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
         print(f"FETCH SUCCESS {group}/{category}: {total_fetched} records in {len(page_summaries)} pages", flush=True)
         return summary
-    except Exception as exc:
-        raise RuntimeError(
-            f"{group}/{category} page collection failed: {exc}"
-        ) from exc
+    except ClearancePreconditionError:
+        if page_summaries:
+            partial_path = raw_dir / f"{category}_partial_{stamp}.json"
+            partial_path.write_text(json.dumps({
+                "collection_group": group,
+                "category": category,
+                "complete_source": False,
+                "pages": page_summaries,
+            }, ensure_ascii=False), encoding="utf-8")
+            print("PARTIAL_MANIFEST:" + partial_path.name, flush=True)
+        raise
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description="Fetch Setad auction listing categories")
     parser.add_argument("--group", choices=COLLECTION_GROUPS, default=None)
@@ -834,7 +520,6 @@ def parse_args():
     parser.add_argument("--rows", type=int, default=None)
     parser.add_argument("--delay", type=float, default=0.7)
     parser.add_argument("--raw-dir", type=Path, default=None)
-    parser.add_argument("--fresh", action="store_true", help="Ignore an incomplete Central Board checkpoint and start over")
     return parser.parse_args()
 
 
@@ -852,7 +537,6 @@ def main() -> int:
                 args.delay,
                 args.raw_dir,
                 collection_group=group,
-                resume=not args.fresh,
             )
             return 0
         except Exception as exc:
@@ -871,7 +555,6 @@ def main() -> int:
                 args.delay,
                 args.raw_dir,
                 collection_group=group,
-                resume=not args.fresh,
             )
         except Exception as exc:
             failures.append(f"{category}: {exc}")

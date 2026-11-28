@@ -120,7 +120,7 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
         "tableId": 537644,
         "title": "حراج کتری برقی نام تجاری DEINI",
         "basePrice": 9000000,
-        "orgName": "سازمان جمع آوری و فروش اموال تملیکی",
+        "orgName": "اداره کل منابع طبیعی",
         "provinceName": "کرمان",
         "cityName": "کرمان",
         "categoryName": "لوازم خانگی، صوتی و تصویری",
@@ -131,8 +131,8 @@ def test_clearance_cards_price_unit_and_jalali_deadline():
     row, status = project_auction(raw, "clearance")
     assert status == "unmatched"
     assert row["source_party_id"] == "4577196"
-    assert row["collection_group"] == "shared"
-    assert row["source"] == "setad_clearance_shared"
+    assert row["collection_group"] == "executive_agencies"
+    assert row["source"] == "setad_clearance_executive_agencies"
     assert row["auction_no"] == "3105001053005896"
     assert row["money_unit"] == "IRR"
     assert row["base_total_price"] == Decimal("9000000")
@@ -158,14 +158,9 @@ def test_endpoints_and_zero_based_pagination():
             assert params["propertySearchCriteriaDto.auctionType"] == "NON_PROPERTY"
         if category == "clearance":
             assert params["tagCode"] == "341,343"
+            assert params["notOrgId"] == "5315"
             assert "selectedOrganization" not in params
             assert params["boardCode"] == "3"
-
-
-def test_shared_clearance_default_page_size_is_50():
-    from setad_scope.collectors.auction_sources.registry import source_for
-
-    assert source_for("clearance", "shared").default_rows == 50
 
 
 def test_pagination_totals_for_both_apis():
@@ -173,16 +168,17 @@ def test_pagination_totals_for_both_apis():
     assert page_totals({"totalPages": 44, "totalElements": 218}, "clearance", 5) == (44, 218)
 
 
-def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
+def test_group_registry_keeps_clearance_sources_independent():
     from setad_scope.collectors.auction_sources.registry import (
         CATEGORIES_BY_GROUP,
         resolve_collection_group,
+        source_for,
     )
 
-    expected_eauc = ("movable", "immovable", "rental", "minor")
-    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_eauc
-    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_eauc
-    assert CATEGORIES_BY_GROUP["shared"] == ("clearance",)
+    expected_categories = ("movable", "immovable", "rental", "minor", "clearance")
+    assert CATEGORIES_BY_GROUP["executive_agencies"] == expected_categories
+    assert CATEGORIES_BY_GROUP["amval_tamliki"] == expected_categories
+    assert set(CATEGORIES_BY_GROUP) == {"executive_agencies", "amval_tamliki"}
 
     for group in ("executive_agencies", "amval_tamliki"):
         for category, endpoint in {
@@ -196,16 +192,65 @@ def test_group_registry_reuses_eauc_parser_but_keeps_sources_independent():
             assert params["page"] == 0
             assert params["rows"] == 30
 
-    clearance_url, clearance_params = request_details("clearance", 0, 5, "shared")
-    assert "/api/centralboard/cards/" in clearance_url
-    assert clearance_params["tagCode"] == "341,343"
-    assert "selectedOrganization" not in clearance_params
-    assert resolve_collection_group("clearance") == "shared"
-    with pytest.raises(ValueError, match="not configured"):
-        resolve_collection_group("clearance", "executive_agencies")
-    with pytest.raises(ValueError, match="not configured"):
-        resolve_collection_group("clearance", "amval_tamliki")
+    executive_url, executive_params = request_details("clearance", 0, 5, "executive_agencies")
+    assert "/api/centralboard/cards/" in executive_url
+    assert executive_params["tagCode"] == "341,343"
+    assert executive_params["notOrgId"] == "5315"
+    assert "selectedOrganization" not in executive_params
 
+    amval_url, amval_params = request_details("clearance", 0, 5, "amval_tamliki")
+    assert "/api/centralboard/cards/" in amval_url
+    assert amval_params["tagCode"] == "342"
+    assert amval_params["selectedOrganization"] == "5315"
+    assert amval_params["pageNumber"] == 0
+    assert amval_params["pageSize"] == 5
+    assert amval_params["sort"] == "score,desc"
+    assert source_for("clearance", "amval_tamliki").default_rows == 5
+
+    assert resolve_collection_group("clearance") == "executive_agencies"
+    assert resolve_collection_group("clearance", "executive_agencies") == "executive_agencies"
+    assert resolve_collection_group("clearance", "amval_tamliki") == "amval_tamliki"
+    with pytest.raises(ValueError, match="Unknown collection group"):
+        resolve_collection_group("clearance", "shared")
+
+
+def test_amval_centralboard_clearance_validates_organization_identity():
+    from setad_scope.collectors.auction_sources.registry import source_for
+    from setad_scope.collectors.fetch_auction_categories import (
+        SourceContextMismatch,
+        validate_source_context,
+    )
+
+    raw = {
+        "cartId": 4618589,
+        "ticketId": "92816610-1b59-4234-a76f-f5c8d96afa31",
+        "number": 3105001053006339,
+        "title": "حراج خودرو GAC spio LNAA3AA18P5693879 مدل -سفید اتومات 2023",
+        "basePrice": 12500000000,
+        "orgName": "سازمان جمع آوری و فروش اموال تملیکی",
+        "orgId": 5315,
+        "tagCode": 342,
+        "provinceName": "تهران",
+        "cityName": "تهران",
+        "jalaliSendDeadlineDate": "1405/09/08 - 19:00",
+        "jalaliFromProposalDate": "1405/09/08 - 08:00",
+    }
+    item, _ = project_auction(raw, "clearance", collection_group="amval_tamliki")
+    source = source_for("clearance", "amval_tamliki")
+
+    assert item["collection_group"] == "amval_tamliki"
+    assert item["source"] == "setad_clearance_amval_tamliki"
+    assert item["source_party_id"] == "4618589"
+    assert "selectedOrganization=5315" in item["source_url"]
+    validate_source_context([raw], source)
+
+    wrong_owner = {**raw, "orgId": 1234}
+    with pytest.raises(SourceContextMismatch, match="expected orgId=5315"):
+        validate_source_context([wrong_owner], source)
+
+    missing_owner = {key: value for key, value in raw.items() if key != "orgId"}
+    with pytest.raises(SourceContextMismatch, match="orgId is missing"):
+        validate_source_context([missing_owner], source)
 
 def test_project_auction_records_the_explicit_collection_group():
     raw = {
@@ -409,7 +454,8 @@ def test_eauc_rejects_wrong_reported_page_to_prevent_missing_data(tmp_path, monk
     assert not list(root.glob("movable_run_*.json"))
 
 
-def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
+@pytest.mark.parametrize("group", ["executive_agencies", "amval_tamliki"])
+def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch, group):
     from setad_scope.collectors import fetch_auction_categories as module
 
     requested = []
@@ -430,14 +476,15 @@ def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
             else:
                 response.status_code = 200
                 response._content = json.dumps({
-                    "content": [{"cartId": page + 100}],
+                    "content": [{"cartId": page + 100, "orgId": 5315}],
                     "totalPages": 5,
                     "totalElements": 5,
                 }).encode("utf-8")
             response.url = url
             return response
 
-    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.delenv("SETADSCOPE_RETRY_SIGNAL", raising=False)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
     monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
 
     summary = module.collect(
@@ -445,7 +492,7 @@ def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
         delay=0,
         raw_dir=tmp_path,
         session=Session(),
-        collection_group="shared",
+        collection_group=group,
         retry_initial_seconds=1,
         retry_max_seconds=4,
     )
@@ -459,12 +506,12 @@ def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
     assert waiting["retry_in_seconds"] == 2.0
     assert waiting["retry_at"] > 0
     assert waiting["manual_retry_at"] is None
+    assert waiting["retry_id"]
     assert any(event["phase"] == "waiting_for_access" for event in events)
-    assert any("دسترسی به منبع برقرار شد" in event.get("message", "") for event in events)
-    assert not (tmp_path / "clearance_checkpoint.json").exists()
 
 
-def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeypatch):
+@pytest.mark.parametrize("group", ["executive_agencies", "amval_tamliki"])
+def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeypatch, group):
     from setad_scope.collectors import fetch_auction_categories as module
 
     requested = []
@@ -483,7 +530,7 @@ def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeyp
             else:
                 response.status_code = 200
                 response._content = json.dumps({
-                    "content": [{"cartId": page + 100}],
+                    "content": [{"cartId": page + 100, "orgId": 5315}],
                     "totalPages": 2,
                     "totalElements": 2,
                 }).encode("utf-8")
@@ -496,7 +543,7 @@ def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeyp
             signal_path.write_text(values["retry_id"], encoding="utf-8")
 
     monkeypatch.setenv("SETADSCOPE_RETRY_SIGNAL", str(signal_path))
-    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
     monkeypatch.setattr(module, "emit_progress", report_progress)
 
     summary = module.collect(
@@ -504,7 +551,7 @@ def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeyp
         delay=0,
         raw_dir=tmp_path,
         session=Session(),
-        collection_group="shared",
+        collection_group=group,
         retry_initial_seconds=240,
         retry_max_seconds=300,
     )
@@ -512,84 +559,7 @@ def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeyp
     waiting = next(event for event in events if event["phase"] == "waiting_for_access")
     assert waiting["manual_retry_at"] is not None
     assert waiting["retry_at"] > waiting["manual_retry_at"]
+    assert waiting["retry_id"]
     assert requested == [0, 0, 1]
     assert sleeps == []
     assert summary["complete_source"] is True
-
-
-def test_clearance_resumes_from_checkpoint_without_refetching_saved_pages(tmp_path, monkeypatch):
-    from setad_scope.collectors import fetch_auction_categories as module
-
-    requested = []
-    should_fail = {"value": True}
-
-    def fake_fetch(session, category, page, rows, collection_group=None):
-        requested.append(page)
-        if page == 2 and should_fail["value"]:
-            raise RuntimeError("simulated interruption")
-        return {
-            "content": [{"cartId": page + 100}],
-            "totalPages": 5,
-            "totalElements": 5,
-        }
-
-    monkeypatch.setattr(module, "fetch_page", fake_fetch)
-
-    with pytest.raises(RuntimeError, match="simulated interruption"):
-        module.collect(
-            "clearance",
-            delay=0,
-            raw_dir=tmp_path,
-            session=Mock(),
-            collection_group="shared",
-        )
-
-    checkpoint_path = tmp_path / "clearance_checkpoint.json"
-    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
-    assert checkpoint["status"] == "interrupted"
-    assert checkpoint["next_page"] == 2
-    assert [item["page"] for item in checkpoint["pages"]] == [0, 1]
-
-    should_fail["value"] = False
-    requested.clear()
-    summary = module.collect(
-        "clearance",
-        delay=0,
-        raw_dir=tmp_path,
-        session=Mock(),
-        collection_group="shared",
-    )
-
-    assert requested == [2, 3, 4]
-    assert summary["resumed"] is True
-    assert summary["complete_source"] is True
-    assert summary["rows_saved"] == 5
-    assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
-    assert not checkpoint_path.exists()
-
-
-def test_clearance_default_cooldown_starts_at_four_minutes(tmp_path, monkeypatch):
-    from setad_scope.collectors import fetch_auction_categories as module
-
-    sleeps = []
-    attempts = []
-    events = []
-
-    def fetch(*args):
-        attempts.append(1)
-        if len(attempts) <= 2:
-            response = module.requests.Response()
-            response.status_code = 428
-            response._content = b'{"flag":true}'
-            if len(attempts) == 2:
-                response.headers["Retry-After"] = "360"
-            raise module.ClearancePreconditionError("shared/clearance", 0, response)
-        return {"content": [{"cartId": 1}], "totalPages": 1, "totalElements": 1}
-
-    monkeypatch.delenv("SETADSCOPE_RETRY_SIGNAL", raising=False)
-    monkeypatch.setattr(module, "_fetch_for_group", fetch)
-    monkeypatch.setattr(module.time, "sleep", sleeps.append)
-    monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
-    module.collect("clearance", delay=0, raw_dir=tmp_path, session=Mock(), collection_group="shared")
-    assert sleeps == [240.0, 360.0]
-    assert [e["retry_in_seconds"] for e in events if e["phase"] == "waiting_for_access"] == sleeps

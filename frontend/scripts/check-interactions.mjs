@@ -153,16 +153,22 @@ console.log("Collection timestamp checks passed: persistent history and Tehran-l
 const toastViewport = read("src/components/ToastViewport.jsx");
 const toastStyles = read("src/components/ToastViewport.css");
 const toastUtils = read("src/utils/toast.js");
+const retryWait = read("src/components/CollectionWait.jsx");
 assert.match(app, /<ToastViewport \/>/);
 assert.match(dashboard, /className="collection-action-card"/);
 assert.match(dashboard, /collection-action-card__last-updated/);
 assert.match(dashboard, /notifyToast\(\s*"loading"/);
-assert.match(dashboard, /notifyToast\(nextState\.status === "completed" \? "success" : "error"/);
+assert.match(dashboard, /notifyToast\(\s*nextState\.status === "completed" \? "success" : "error"/);
 assert.match(dashboard, /notifyToast\(\s*"error"/);
 assert.match(toastViewport, /setadscope:toast/);
 assert.match(toastViewport, /aria-live="polite"/);
 assert.match(toastViewport, /TOAST_ICONS/);
 assert.match(toastStyles, /app-toast-enter/);
 assert.match(toastUtils, /export function notifyToast/);
+assert.match(dashboard, /import CollectionWait from/);
+assert.match(dashboard, /<CollectionWait state={state} \/>/);
+assert.match(globalCollection, /<CollectionWait state={state} \/>/);
+assert.match(retryWait, /retryClearance\(retryId, collectionGroup\)/);
+assert.match(retryWait, /retryId && now < deadline/);
 
-console.log("Toast checks passed: request, success, error and accessible viewport.");
+console.log("Toast and clearance retry interaction checks passed.");

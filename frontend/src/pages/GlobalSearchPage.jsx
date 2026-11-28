@@ -64,6 +64,7 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
   const [kind, setKind] = useState("all");
   const [sortBy, setSortBy] = useState("announcement_at");
   const [sortDir, setSortDir] = useState("desc");
+  const [selectedRows, setSelectedRows] = useState([]);
   const [pageSize, setPageSize] = useState(PAGE_SIZE);
   const [page, setPage] = useState(1);
   const [result, setResult] = useState({
@@ -274,6 +275,25 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
     sort_dir: sortDir,
   });
   const exportHref = "/api/search/export.xlsx?" + exportParams.toString();
+  const selectedExportBody = selectedRows.length
+    ? { selected_records: selectedRows }
+    : undefined;
+  const currentPageKeys = new Set((result.items || []).map((item) => item.row_key));
+  const hasSelectionOutsidePage = selectedRows.some((key) => !currentPageKeys.has(key));
+
+  function toggleSelectedRow(key, checked) {
+    setSelectedRows((current) => checked
+      ? current.includes(key) ? current : [...current, key]
+      : current.filter((value) => value !== key));
+  }
+
+  function togglePageSelection(keys, checked) {
+    setSelectedRows((current) => {
+      const pageKeys = new Set(keys);
+      const retained = current.filter((key) => !pageKeys.has(key));
+      return checked ? [...retained, ...keys.filter((key) => !current.includes(key))] : retained;
+    });
+  }
 
   return (
     <>
@@ -319,16 +339,29 @@ export default function GlobalSearchPage({ query, onQueryChange }) {
             onPageChange={loadPage}
             onPageSizeChange={(nextSize) => { setPage(1); setPageSize(nextSize); }}
             onDetails={openDetails}
+            selectedKeys={selectedRows}
+            selectionKey={(item) => item.row_key}
+            onToggleSelection={toggleSelectedRow}
+            onTogglePageSelection={togglePageSelection}
             error={error}
             onRetry={() => loadPage(page)}
             sortBy={sortBy}
             sortDir={sortDir}
             onSort={changeSort}
             headerActions={
-              <ExcelExportButton
-                href={exportHref}
-                filename="setadscope_global.xlsx"
-              />
+              <div className="table-export-actions">
+                {selectedRows.length > 0 && <>
+                  <span className="table-selection-count">{formatNumber(selectedRows.length)} ردیف انتخاب شده</span>
+                  {hasSelectionOutsidePage && <button type="button" className="table-selection-clear" onClick={() => setSelectedRows([])}>پاک کردن همهٔ انتخاب‌ها</button>}
+                </>}
+                <ExcelExportButton
+                  href={exportHref}
+                  method={selectedExportBody ? "POST" : "GET"}
+                  body={selectedExportBody}
+                  label={selectedExportBody ? "خروجی اکسل انتخاب‌شده‌ها" : "خروجی Excel"}
+                  filename="setadscope_global.xlsx"
+                />
+              </div>
             }
             advancedSearch={
               <FiltersPanel

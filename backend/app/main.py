@@ -4,8 +4,8 @@ import json
 import os
 import subprocess
 import sys
-import threading
 import tempfile
+import threading
 import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
@@ -13,7 +13,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Annotated, Literal
 
-from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query
+from fastapi import BackgroundTasks, Body, Depends, FastAPI, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy import String, cast, func, or_, select
 from sqlalchemy.orm import Session
@@ -85,14 +85,13 @@ collection_lock = threading.Lock()
 COLLECTION_GROUP_LABELS = {
     "executive_agencies": "دستگاه‌های اجرایی",
     "amval_tamliki": "سازمان اموال تملیکی",
-    "shared": "تابلوی مشترک ستاد",
 }
 AUCTION_CATEGORY_LABELS = {
     "movable": "منقول",
     "immovable": "غیرمنقول",
     "rental": "اجاره",
     "minor": "جزئی",
-    "clearance": "حراج مشترک",
+    "clearance": "حراج",
 }
 GLOBAL_COLLECTION_SOURCES = tuple(
     {
@@ -100,10 +99,8 @@ GLOBAL_COLLECTION_SOURCES = tuple(
         "collection_group": group,
         "category": category,
         "label": (
-            "حراج مشترک ستاد"
-            if group == "shared"
-            else f"{AUCTION_CATEGORY_LABELS.get(category, category)} — "
-                 f"{COLLECTION_GROUP_LABELS.get(group, group)}"
+            f"{AUCTION_CATEGORY_LABELS.get(category, category)} — "
+            f"{COLLECTION_GROUP_LABELS.get(group, group)}"
         ),
     }
     for group, categories in AUCTION_CATEGORIES_BY_GROUP.items()
@@ -139,7 +136,7 @@ def auction_batch_sources(
         if not categories or category in categories
         for source in GLOBAL_COLLECTION_SOURCES
         if source["category"] == category
-        and (group == "all" or source["collection_group"] in (group, "shared"))
+        and (group == "all" or source["collection_group"] == group)
     )
 
 
@@ -202,6 +199,10 @@ def initial_global_collection_state(
         "overall_progress_percent": 0,
         "current_phase": "idle",
         "current_message": "",
+        "retry_at": None,
+        "manual_retry_at": None,
+        "retry_id": None,
+        "retry_collection_group": None,
         "current_pages_completed": 0,
         "current_total_pages": None,
         "current_records_fetched": 0,
@@ -262,6 +263,7 @@ def update_collection_state(state_key: str, **values) -> dict:
                 "retry_at": collection_state.get("retry_at") if collection_state.get("phase") == "waiting_for_access" else None,
                 "manual_retry_at": collection_state.get("manual_retry_at") if collection_state.get("phase") == "waiting_for_access" else None,
                 "retry_id": collection_state.get("retry_id") if collection_state.get("phase") == "waiting_for_access" else None,
+                "retry_collection_group": collection_state.get("collection_group") if collection_state.get("phase") == "waiting_for_access" else None,
                 "current_message": collection_state.get("message", "در حال دریافت اطلاعات..."),
                 "current_pages_completed": collection_state.get("pages_completed", 0),
                 "current_total_pages": collection_state.get("total_pages"),
@@ -326,15 +328,12 @@ def run_collection_job(
             collector_args = ["--start-page", "1", "--rows", "30", "--delay", "0.7"]
         else:
             module = "setad_scope.collectors.fetch_auction_categories"
-            request_delay = (
-                "2.0" if group == "shared" and category == "clearance" else "0.7"
-            )
             collector_args = [
                 "--group", group, "--category", category,
-                "--start-page", "0", "--delay", request_delay,
+                "--start-page", "0", "--delay", "0.7",
             ]
 
-        if group == "shared" and category == "clearance":
+        if kind == "auctions" and category == "clearance":
             retry_signal_dir = tempfile.TemporaryDirectory(prefix="setad-retry-")
             signal_path = Path(retry_signal_dir.name) / "retry"
             env["SETADSCOPE_RETRY_SIGNAL"] = str(signal_path)
@@ -394,7 +393,7 @@ def run_collection_job(
         output = "\n".join(output_lines)[-5000:]
         incomplete = return_code != 0
         reason = failure_message or f"{state_key} collector exited with code {return_code}"
-        if incomplete and not (kind == "auctions" and group == "shared" and category == "clearance" and partial_manifest):
+        if incomplete and not (kind == "auctions" and category == "clearance" and partial_manifest):
             raise RuntimeError(failure_message or output or reason)
 
         with collection_lock:
@@ -762,12 +761,7 @@ def _auction_group_scope(
     if category == "all" or categories:
         conditions = [Auction.category.in_(categories)] if categories else []
         if collection_group in ("executive_agencies", "amval_tamliki"):
-            conditions.append(
-                or_(
-                    Auction.collection_group == collection_group,
-                    (Auction.collection_group == "shared") & (Auction.category == "clearance"),
-                )
-            )
+            conditions.append(Auction.collection_group == collection_group)
         elif collection_group != "all":
             conditions.append(Auction.collection_group == collection_group)
         return conditions
@@ -846,7 +840,6 @@ def auction_filter_options(
         "collection_groups": [
             {"value": "executive_agencies", "label": "دستگاه‌های اجرایی"},
             {"value": "amval_tamliki", "label": "سازمان جمع‌آوری و فروش اموال تملیکی"},
-            {"value": "shared", "label": "حراج مشترک ستاد"},
         ],
     }
 
@@ -1108,12 +1101,12 @@ def start_auction_batch(
     return response
 
 
-# Existing route shapes remain available. Pass collection_group to select a
-# source group; clearance defaults to the shared Central Board feed.
+# Clearance is a category available in both owning collections. It defaults
+# to executive_agencies; pass amval_tamliki for the separately scoped feed.
 @app.get("/api/collection/auctions/{category}/status")
 def get_auction_category_status(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
-    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
     db: Session = Depends(get_db),
 ):
     try:
@@ -1129,7 +1122,7 @@ def start_auction_category_collection(
     category: Literal["movable", "immovable", "rental", "minor", "clearance"],
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    collection_group: Literal["executive_agencies", "amval_tamliki", "shared"] | None = None,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] | None = None,
 ):
     try:
         group = resolve_collection_group(category, collection_group)
@@ -1161,9 +1154,12 @@ def start_auction_category_collection(
 
 
 @app.post("/api/collection/auctions/clearance/retry", status_code=202)
-def request_clearance_retry(retry_id: str):
-    """Request an immediate manual probe while automatic retry is waiting."""
-    state_key = collection_state_key("shared", "clearance")
+def request_clearance_retry(
+    retry_id: str,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] = "executive_agencies",
+):
+    """Request an immediate probe while an owner-specific clearance feed is waiting."""
+    state_key = collection_state_key(collection_group, "clearance")
     with collection_lock:
         state = collection_states[state_key]
         signal = retry_signal_paths.get(state_key)
@@ -1175,14 +1171,17 @@ def request_clearance_retry(retry_id: str):
             or not signal
             or not (now < (state.get("retry_at") or 0))
         ):
-            raise HTTPException(status_code=409, detail="این نوبت انتظار به پایان رسیده یا بررسی خودکار آغاز شده است.")
+            raise HTTPException(
+                status_code=409,
+                detail="این نوبت انتظار به پایان رسیده یا بررسی خودکار آغاز شده است.",
+            )
         signal.write_text(retry_id, encoding="utf-8")
         return {"accepted": True}
 
 
 @app.get("/api/collection/auctions/history")
 def get_auction_collection_history(
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     category: Literal["movable", "immovable", "rental", "minor", "clearance"] | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
@@ -1245,7 +1244,7 @@ def get_auctions(
     search: str | None = None,
     category: AuctionCategory | Literal["all"] = "movable",
     categories: list[AuctionCategory] | None = Query(None),
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     today_only: bool = False,
     status: Literal["active", "archive", "all"] = "all",
@@ -1292,12 +1291,13 @@ def get_auctions(
 
 
 @app.get("/api/auctions/export.xlsx")
+@app.post("/api/auctions/export.xlsx")
 def export_auctions(
     status: Literal["active", "archive", "all"] = "all",
     search: str | None = None,
     category: AuctionCategory | Literal["all"] = "movable",
     categories: list[AuctionCategory] | None = Query(None),
-    collection_group: Literal["all", "executive_agencies", "amval_tamliki", "shared"] = "all",
+    collection_group: Literal["all", "executive_agencies", "amval_tamliki"] = "all",
     matched_only: bool = True,
     today_only: bool = False,
     province: str | None = None,
@@ -1311,15 +1311,20 @@ def export_auctions(
     price_max: Decimal | None = Query(None, ge=0),
     sort_by: str = Query("proposal_deadline"),
     sort_dir: Literal["asc", "desc"] = "asc",
+    selected_ids: list[int] | None = Body(default=None, embed=True),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    query = filtered_query(
-        status, search, province, city, state,
-        announcement_from, announcement_to, deadline_from, deadline_to,
-        price_min, price_max, category, matched_only, collection_group, categories, today_only,
+    query = (
+        select(Auction).where(Auction.id.in_(set(selected_ids)))
+        if selected_ids
+        else filtered_query(
+            status, search, province, city, state,
+            announcement_from, announcement_to, deadline_from, deadline_to,
+            price_min, price_max, category, matched_only, collection_group, categories, today_only,
+        )
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()

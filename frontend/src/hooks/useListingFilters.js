@@ -4,7 +4,7 @@ const EMPTY_FILTERS = {
   collection_group: "",
   province: "",
   city: "",
-  status: "all",
+  status: "active",
   state: "",
   type_name: "",
   announcement_from: "",

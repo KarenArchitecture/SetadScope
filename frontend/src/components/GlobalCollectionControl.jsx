@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { AlertCircle, CheckCircle2, LoaderCircle, RefreshCw, X } from "lucide-react";
 import {
   getGlobalCollectionStatus,
-  getCollectionStatus,
   startGlobalCollection,
 } from "../services/api";
 import { notifyToast } from "../utils/toast";
@@ -16,7 +15,6 @@ function formatNumber(value) {
 
 export default function GlobalCollectionControl({ apiOnline }) {
   const [state, setState] = useState(null);
-  const [clearanceState, setClearanceState] = useState(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [failuresOpen, setFailuresOpen] = useState(false);
@@ -24,8 +22,6 @@ export default function GlobalCollectionControl({ apiOnline }) {
   const [startedHere, setStartedHere] = useState(false);
 
   const isRunning = state?.status === "running";
-  const isClearanceRunning = ["collecting", "importing"].includes(clearanceState?.status);
-  const shouldWarnBeforeLeaving = isRunning || isClearanceRunning;
   const runId = state?.started_at || null;
   const failedSources = Array.isArray(state?.failed_sources) ? state.failed_sources : [];
   const progress = Math.max(
@@ -48,39 +44,22 @@ export default function GlobalCollectionControl({ apiOnline }) {
       if (requestInFlight) return;
       requestInFlight = true;
       try {
-        const [globalResult, clearanceResult] = await Promise.allSettled([
-          getGlobalCollectionStatus(),
-          getCollectionStatus("auctions", "clearance", "shared"),
-        ]);
-        if (active && globalResult.status === "fulfilled") setState(globalResult.value);
-        if (active && clearanceResult.status === "fulfilled") setClearanceState(clearanceResult.value);
+        const next = await getGlobalCollectionStatus();
+        if (active) setState(next);
+      } catch {
+        // Keep the last known state visible during temporary API interruptions.
       } finally {
         requestInFlight = false;
       }
     }
 
     refreshStatus();
-    const timer = window.setInterval(
-      refreshStatus,
-      (isRunning || isClearanceRunning) ? 1000 : 3000,
-    );
+    const timer = window.setInterval(refreshStatus, isRunning ? 1000 : 10000);
     return () => {
       active = false;
       window.clearInterval(timer);
     };
-  }, [isRunning, isClearanceRunning]);
-
-  // Warn before leaving while the long-running Central Board collector is active.
-  // The browser still lets the user leave; the backend job continues independently.
-  useEffect(() => {
-    if (!shouldWarnBeforeLeaving) return undefined;
-    function warnBeforeUnload(event) {
-      event.preventDefault();
-      event.returnValue = "";
-    }
-    window.addEventListener("beforeunload", warnBeforeUnload);
-    return () => window.removeEventListener("beforeunload", warnBeforeUnload);
-  }, [shouldWarnBeforeLeaving]);
+  }, [isRunning]);
 
   useEffect(() => {
     if (!confirmOpen) return undefined;
@@ -281,17 +260,14 @@ export default function GlobalCollectionControl({ apiOnline }) {
             </div>
             <h2 id="global-collection-dialog-title">بروزرسانی سراسری آگهی‌ها؟</h2>
             <p id="global-collection-dialog-description">
-              با تایید این عملیات، تمام {formatNumber(state?.total_sources || 10)} منبع داده به ترتیب اجرا می‌شوند:
-              چهار دسته مزایده دستگاه‌های اجرایی، چهار دسته مزایده اموال تملیکی، حراج مشترک ستاد و مناقصه‌ها.
+              با تایید این عملیات، تمام {formatNumber(state?.total_sources || 11)} منبع داده به ترتیب اجرا می‌شوند:
+              پنج دسته مزایده دستگاه‌های اجرایی، پنج دسته مزایده اموال تملیکی و مناقصه‌ها.
+              حراج هر مجموعه نیز به‌صورت مستقل جمع‌آوری می‌شود.
             </p>
             <p>
               این فرآیند با توجه به تعداد صفحات ممکن است زمان‌بر باشد. اگر یک Collector با خطا مواجه شود،
               فقط همان منبع ناموفق ثبت می‌شود و اجرای منابع بعدی ادامه پیدا می‌کند.
               در تمام این مدت می‌توانی در بخش‌های دیگر سایت جابه‌جا شوی؛ عملیات در سمت سرور ادامه خواهد داشت.
-            </p>
-            <p>
-              اگر حراج دستگاه‌های اجرایی پاسخ HTTP 428 بدهد، عملیات وارد حالت انتظار می‌شود و پس از بازگشت دسترسی از همان صفحه ادامه می‌یابد.
-              بستن تب با هشدار مرورگر همراه است، اما اجرای سمت سرور ادامه پیدا می‌کند.
             </p>
             <div className="global-collection-dialog__actions">
               <button

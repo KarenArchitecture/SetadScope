@@ -161,7 +161,11 @@ def project_auction(
         auction_no = _id(record.get("number"))
         auction_id = _id(record.get("tableId"))
         state = _id(record.get("aucState"))
-        source_url = "https://fe.setadiran.ir/centralboard/?tagCode=341,343&boardCode=3"
+        source_url = (
+            "https://fe.setadiran.ir/centralboard/?tagCode=342&selectedOrganization=5315&boardCode=3"
+            if group == "amval_tamliki"
+            else "https://fe.setadiran.ir/centralboard/?tagCode=341,343&notOrgId=5315&boardCode=3"
+        )
     else:
         date_start = _date(auction, "fromProposalDate")
         date_deadline = _date(auction, "toProposalDate")

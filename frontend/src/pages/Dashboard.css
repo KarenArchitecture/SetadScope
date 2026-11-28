@@ -1582,6 +1582,19 @@
   flex-wrap: wrap;
 }
 
+.table-selection-cell { width: 42px; text-align: center !important; }
+.table-selection-cell input { width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+.auction-table tbody tr.table-row--selected { background: var(--accent-soft); }
+.table-export-actions { display: flex; align-items: center; justify-content: flex-end; gap: 9px; flex-wrap: wrap; }
+.table-priority-toggle { display: inline-flex; align-items: center; gap: 7px; min-height: 34px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-muted); background: var(--surface); font: inherit; font-size: 11px; cursor: pointer; transition: .18s ease; }
+.table-priority-toggle:hover { border-color: var(--accent); }
+.table-priority-toggle--active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
+.table-priority-toggle strong { font-size: 10px; }
+.table-priority-count { color: var(--text-muted); font-size: 10px; white-space: nowrap; }
+.table-selection-count { color: var(--text-muted); font-size: 11px; white-space: nowrap; }
+.table-selection-clear { border: 0; padding: 4px; color: var(--accent); background: transparent; font: inherit; font-size: 11px; cursor: pointer; }
+.table-selection-clear:hover { text-decoration: underline; }
+
 .stat-card__value {
   font-size: 24px;
   line-height: 1.25;
@@ -1656,11 +1669,3 @@
     transition: none;
   }
 }
-
-/* The Central Board cooldown is an active collection state, not a failure. */
-.collection-wait { margin: 10px 0; display: grid; gap: 8px; }
-.collection-wait p { margin: 0; font-size: 0.85rem; }
-.collection-wait__controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
-.collection-wait__countdown { display: inline-flex; align-items: center; gap: 6px; font-variant-numeric: tabular-nums; }
-.collection-wait__retry { display: inline-flex; gap: 6px; align-items: center; }
-.collection-wait__retry:disabled { opacity: 0.5; cursor: not-allowed; }

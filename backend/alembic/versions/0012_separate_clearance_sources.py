@@ -13,7 +13,7 @@ depends_on = None
 
 EXECUTIVE_SOURCE = "setad_clearance_executive_agencies"
 AMVAL_SOURCE = "setad_clearance_amval_tamliki"
-EXECUTIVE_URL = "https://fe.setadiran.ir/centralboard/?tagCode=341,343&boardCode=3"
+EXECUTIVE_URL = "https://fe.setadiran.ir/centralboard/?tagCode=341,343&notOrgId=5315&boardCode=3"
 AMVAL_URL = "https://fe.setadiran.ir/centralboard/?tagCode=342&selectedOrganization=5315&boardCode=3"
 
 
@@ -86,7 +86,7 @@ def downgrade():
         UPDATE auctions
         SET collection_group = 'shared',
             source = 'setad_clearance_shared',
-            source_url = 'https://fe.setadiran.ir/centralboard/?tagCode=341,343&boardCode=3'
+            source_url = 'https://fe.setadiran.ir/centralboard/?tagCode=341,343&notOrgId=5315&boardCode=3'
         WHERE category = 'clearance'
           AND (
               (collection_group = 'executive_agencies' AND source = :executive_source)

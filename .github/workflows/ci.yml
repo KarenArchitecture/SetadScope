@@ -7,7 +7,7 @@ on:
       - feature/postgres-keyword-pipeline
       - UI-UX-improvement
       - feature/multi-source-auction-architecture
-      - Sale14050904
+      - haraj-fix14050905
   pull_request:
     branches:
       - master
@@ -131,7 +131,7 @@ jobs:
                   (source, source_party_id, category, matched_keywords, raw_payload)
                   VALUES ('setad_clearance_5315', 'pre-migration-clearance', 'clearance',
                   CAST(:keywords AS json), CAST(:payload AS jsonb))"""),
-                  {"keywords": "[]", "payload": '{"marker": "pre-migration-clearance"}'},
+                  {"keywords": "[]", "payload": '{"marker": "pre-migration-clearance", "orgId": 5315, "tagCode": 342, "orgName": "سازمان جمع آوری و فروش اموال تملیکی"}'},
               )
           PY
       - name: Seed archived tender before relevance migration

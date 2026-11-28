@@ -3,8 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import func, or_, select
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
+from sqlalchemy import case, func, or_, select
 from sqlalchemy.orm import Session
 
 from app.db.models import Tender
@@ -201,6 +201,7 @@ def get_tenders(
     documents_deadline_to: str | None = None,
     sort_by: str = Query("public_notification_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    prioritize_golestan: bool = True,
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: Session = Depends(get_db),
@@ -217,11 +218,21 @@ def get_tenders(
     total = db.scalar(select(func.count()).select_from(query.subquery())) or 0
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
+    sort_order = [ordering, Tender.id.asc()]
+    if prioritize_golestan:
+        sort_order.insert(0, case((func.trim(Tender.province).ilike("%گلستان%"), 0), else_=1).asc())
     rows = db.scalars(
-        query.order_by(ordering, Tender.id.asc())
+        query.order_by(*sort_order)
         .offset((page - 1) * page_size)
         .limit(page_size)
     ).all()
+    golestan_count = 0
+    if prioritize_golestan:
+        golestan_count = db.scalar(
+            select(func.count()).select_from(
+                query.where(func.trim(Tender.province).ilike("%گلستان%")).subquery()
+            )
+        ) or 0
 
     return {
         "items": [tender_to_dict(row) for row in rows],
@@ -229,12 +240,14 @@ def get_tenders(
         "page_size": page_size,
         "total": total,
         "pages": (total + page_size - 1) // page_size,
+        "golestan_count": golestan_count,
         "archive_stats": tender_archive_stats(db),
         "filter_options": tender_filter_options(db),
     }
 
 
 @router.get("/api/tenders/export.xlsx")
+@router.post("/api/tenders/export.xlsx")
 def export_tenders(
     search: str | None = None,
     matched_only: bool = False,
@@ -252,20 +265,29 @@ def export_tenders(
     documents_deadline_to: str | None = None,
     sort_by: str = Query("public_notification_at"),
     sort_dir: Literal["asc", "desc"] = "desc",
+    prioritize_golestan: bool = True,
+    selected_ids: list[int] | None = Body(default=None, embed=True),
     progress: ExportProgress | None = Depends(track_excel_export),
     db: Session = Depends(get_db),
 ):
     if sort_by not in ORDER_FIELDS:
         raise HTTPException(status_code=422, detail="Unsupported sort_by column")
-    query = filtered_tender_query(
-        search, province, city, state, type_name,
-        announcement_from, announcement_to, deadline_from, deadline_to,
-        documents_deadline_from, documents_deadline_to,
-        matched_only=matched_only, status=status, today_only=today_only,
+    query = (
+        select(Tender).where(Tender.id.in_(set(selected_ids)))
+        if selected_ids
+        else filtered_tender_query(
+            search, province, city, state, type_name,
+            announcement_from, announcement_to, deadline_from, deadline_to,
+            documents_deadline_from, documents_deadline_to,
+            matched_only=matched_only, status=status, today_only=today_only,
+        )
     )
     column = ORDER_FIELDS[sort_by]
     ordering = column.asc().nulls_last() if sort_dir == "asc" else column.desc().nulls_last()
-    query = query.order_by(ordering, Tender.id.asc())
+    sort_order = [ordering, Tender.id.asc()]
+    if prioritize_golestan:
+        sort_order.insert(0, case((func.trim(Tender.province).ilike("%گلستان%"), 0), else_=1).asc())
+    query = query.order_by(*sort_order)
     headers = [
         "شناسه منبع", "شماره مناقصه", "عنوان", "نوع فراخوان", "سازمان",
         "استان", "شهر", "شرح", "تاریخ انتشار", "مهلت دریافت اسناد",

@@ -13,7 +13,7 @@ param(
     [ValidateSet("movable", "immovable", "rental", "minor", "clearance")]
     [string]$Category = "movable",
 
-    [ValidateSet("executive_agencies", "amval_tamliki", "shared")]
+    [ValidateSet("executive_agencies", "amval_tamliki")]
     [string]$Group
 )
 
@@ -45,7 +45,8 @@ function Show-Help {
     Write-Host "  .\setad.ps1 collect-tenders     Fetch all tender pages and import them"
     Write-Host "  .\setad.ps1 collect-category -Category rental"
     Write-Host "  .\setad.ps1 collect-category -Category movable -Group amval_tamliki"
-    Write-Host "  .\setad.ps1 collect-category -Category clearance -Group shared"
+    Write-Host "  .\setad.ps1 collect-category -Category clearance -Group executive_agencies"
+    Write-Host "  .\setad.ps1 collect-category -Category clearance -Group amval_tamliki"
     Write-Host "  .\setad.ps1 build                 Build images without starting services"
     Write-Host ""
 }
@@ -121,9 +122,6 @@ try {
         "collect-category" {
             if ($PSBoundParameters.ContainsKey("Group")) {
                 $EffectiveGroup = $Group
-            }
-            elseif ($Category -eq "clearance") {
-                $EffectiveGroup = "shared"
             }
             else {
                 $EffectiveGroup = "executive_agencies"
