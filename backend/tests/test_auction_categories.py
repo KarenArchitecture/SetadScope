@@ -464,6 +464,59 @@ def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch):
     assert not (tmp_path / "clearance_checkpoint.json").exists()
 
 
+def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeypatch):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    requested = []
+    sleeps = []
+    events = []
+    signal_path = tmp_path / "retry-signal"
+
+    class Session:
+        def get(self, url, params, timeout):
+            page = params["pageNumber"]
+            requested.append(page)
+            response = module.requests.Response()
+            if len(requested) == 1:
+                response.status_code = 428
+                response._content = b'{"flag":true}'
+            else:
+                response.status_code = 200
+                response._content = json.dumps({
+                    "content": [{"cartId": page + 100}],
+                    "totalPages": 2,
+                    "totalElements": 2,
+                }).encode("utf-8")
+            response.url = url
+            return response
+
+    def report_progress(**values):
+        events.append(values)
+        if values.get("phase") == "waiting_for_access":
+            signal_path.write_text(values["retry_id"], encoding="utf-8")
+
+    monkeypatch.setenv("SETADSCOPE_RETRY_SIGNAL", str(signal_path))
+    monkeypatch.setattr(module.time, "sleep", lambda seconds: sleeps.append(seconds))
+    monkeypatch.setattr(module, "emit_progress", report_progress)
+
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Session(),
+        collection_group="shared",
+        retry_initial_seconds=240,
+        retry_max_seconds=300,
+    )
+
+    waiting = next(event for event in events if event["phase"] == "waiting_for_access")
+    assert waiting["manual_retry_at"] is not None
+    assert waiting["retry_at"] > waiting["manual_retry_at"]
+    assert requested == [0, 0, 1]
+    assert sleeps == []
+    assert summary["complete_source"] is True
+
+
 def test_clearance_resumes_from_checkpoint_without_refetching_saved_pages(tmp_path, monkeypatch):
     from setad_scope.collectors import fetch_auction_categories as module
 
