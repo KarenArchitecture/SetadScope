@@ -1162,7 +1162,7 @@ def start_auction_category_collection(
 
 @app.post("/api/collection/auctions/clearance/retry", status_code=202)
 def request_clearance_retry(retry_id: str):
-    """Request an earlier check only within the permitted retry window."""
+    """Request an immediate manual probe while automatic retry is waiting."""
     state_key = collection_state_key("shared", "clearance")
     with collection_lock:
         state = collection_states[state_key]
@@ -1173,10 +1173,9 @@ def request_clearance_retry(retry_id: str):
             or state.get("phase") != "waiting_for_access"
             or state.get("retry_id") != retry_id
             or not signal
-            or state.get("manual_retry_at") is None
-            or not state["manual_retry_at"] <= now < (state.get("retry_at") or 0)
+            or not (now < (state.get("retry_at") or 0))
         ):
-            raise HTTPException(status_code=409, detail="زمان مجاز بررسی دستی هنوز نرسیده یا دریافت خودکار آغاز شده است.")
+            raise HTTPException(status_code=409, detail="این نوبت انتظار به پایان رسیده یا بررسی خودکار آغاز شده است.")
         signal.write_text(retry_id, encoding="utf-8")
         return {"accepted": True}
 
