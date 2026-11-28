@@ -375,7 +375,7 @@ def _fetch_centralboard_page_with_wait(
         remaining = max(0.0, float(checkpoint.get("retry_at") or 0) - time.time())
         if remaining:
             now = time.time()
-            retry_id = uuid4().hex if signal_name else None
+            retry_id = uuid4().hex
             completed = len(page_summaries)
             emit_progress(
                 collection_group=collection_group,
@@ -432,7 +432,7 @@ def _fetch_centralboard_page_with_wait(
             wait_seconds = max(backoff, _retry_after_seconds(exc))
             now = time.time()
             retry_at = now + wait_seconds
-            retry_id = uuid4().hex if signal_name else None
+            retry_id = uuid4().hex
             checkpoint.update({
                 "status": "waiting",
                 "waiting_page": page,
