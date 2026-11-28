@@ -108,3 +108,39 @@ def test_waiting_clearance_retry_metadata_reaches_global_batch_state():
         with main.collection_lock:
             main.collection_states.clear()
             main.collection_states.update(previous_states)
+
+
+
+def test_interrupted_checkpoint_metadata_is_exposed_for_manual_resume():
+    previous_states = deepcopy(main.collection_states)
+    try:
+        collection_group = "executive_agencies"
+        state_key = main.collection_state_key(collection_group, "clearance")
+        with main.collection_lock:
+            main.collection_states["global"] = main.initial_global_collection_state()
+            main.collection_states["global"].update(
+                status="running",
+                current_source_key=state_key,
+            )
+
+        state = main.update_collection_state(
+            state_key,
+            status="collecting",
+            phase="interrupted",
+            resumable=True,
+            resume_page=381,
+            resume_records_saved=3810,
+            progress_percent=48,
+        )
+        assert state["resumable"] is True
+        assert state["resume_page"] == 381
+        assert state["resume_records_saved"] == 3810
+
+        batch = main.collection_states["global"]
+        assert batch["current_resumable"] is True
+        assert batch["current_resume_page"] == 381
+        assert batch["current_resume_records_saved"] == 3810
+    finally:
+        with main.collection_lock:
+            main.collection_states.clear()
+            main.collection_states.update(previous_states)

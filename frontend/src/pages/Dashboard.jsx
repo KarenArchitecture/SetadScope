@@ -10,6 +10,7 @@ import {
   LoaderCircle,
   MapPin,
   Play,
+  RefreshCw,
   SlidersHorizontal,
   X,
 } from "lucide-react";
@@ -182,7 +183,7 @@ function StatCard({
   );
 }
 
-function CollectionProgress({ state, kind, onDismiss }) {
+function CollectionProgress({ state, kind, onDismiss, onRetry, retrying = false }) {
   if (!state || state.status === "idle") return null;
 
   const isBatch = state.kind === "auction_batch";
@@ -268,6 +269,26 @@ function CollectionProgress({ state, kind, onDismiss }) {
           waiting ? "دریافت اطلاعات به‌صورت مرحله‌ای ادامه دارد." : state.message
         )}
       </p>
+      {!isBatch && state.status === "failed" && state.resumable && onRetry && (
+        <div className="collection-progress__resume">
+          <p>
+            {formatNumber(state.resume_records_saved || 0)} رکورد قبلی ذخیره شده‌اند؛
+            صفحات قبلی دوباره دریافت نمی‌شوند.
+          </p>
+          <button
+            type="button"
+            className="button button--secondary"
+            onClick={onRetry}
+            disabled={retrying}
+            title="جمع‌آوری از صفحه ذخیره‌شده ادامه پیدا می‌کند."
+          >
+            <RefreshCw size={15} className={retrying ? "spin" : ""} />
+            {retrying
+              ? "در حال ادامه..."
+              : "تلاش مجدد از صفحه " + formatNumber(state.resume_page)}
+          </button>
+        </div>
+      )}
       <CollectionWait state={state} />
       <div className="collection-progress__metrics">
         {isBatch ? (
@@ -1217,6 +1238,8 @@ export default function Dashboard({ kind }) {
           <CollectionProgress
             state={collectionState}
             kind={kind}
+            onRetry={handleCollection}
+            retrying={collectionStarting}
             onDismiss={() => {
               if (collectionRunKey)
                 dismissedCollectionRuns.current.add(collectionRunKey);

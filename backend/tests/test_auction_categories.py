@@ -563,3 +563,76 @@ def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeyp
     assert requested == [0, 0, 1]
     assert sleeps == []
     assert summary["complete_source"] is True
+
+
+
+@pytest.mark.parametrize("group", ["executive_agencies", "amval_tamliki"])
+def test_clearance_read_timeout_checkpoint_resumes_from_failed_page(tmp_path, monkeypatch, group):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    requested = []
+    sleeps = []
+    events = []
+    fail_page_two = {"remaining": 3}
+
+    class Session:
+        def get(self, url, params, timeout):
+            page = params["pageNumber"]
+            requested.append(page)
+            if page == 2 and fail_page_two["remaining"]:
+                fail_page_two["remaining"] -= 1
+                raise module.requests.exceptions.ReadTimeout("simulated read timeout")
+
+            response = module.requests.Response()
+            response.status_code = 200
+            response._content = json.dumps({
+                "content": [{
+                    "cartId": page + 100,
+                    "orgId": 5315 if group == "amval_tamliki" else 1000,
+                }],
+                "totalPages": 5,
+                "totalElements": 5,
+            }).encode("utf-8")
+            response.url = url
+            return response
+
+    monkeypatch.delenv("SETADSCOPE_RETRY_SIGNAL", raising=False)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
+
+    with pytest.raises(RuntimeError, match="page 2 failed after retries"):
+        module.collect(
+            "clearance",
+            delay=0,
+            raw_dir=tmp_path,
+            session=Session(),
+            collection_group=group,
+        )
+
+    checkpoint_path = tmp_path / "clearance_checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8"))
+    assert checkpoint["status"] == "interrupted"
+    assert checkpoint["next_page"] == 2
+    assert [item["page"] for item in checkpoint["pages"]] == [0, 1]
+    assert requested == [0, 1, 2, 2, 2]
+    assert sleeps == [2, 4]
+    interrupted = next(event for event in events if event["phase"] == "interrupted")
+    assert interrupted["resumable"] is True
+    assert interrupted["resume_page"] == 2
+    assert interrupted["resume_records_saved"] == 2
+
+    requested.clear()
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Session(),
+        collection_group=group,
+    )
+
+    assert requested == [2, 3, 4]
+    assert summary["resumed"] is True
+    assert summary["complete_source"] is True
+    assert summary["rows_saved"] == 5
+    assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
+    assert not checkpoint_path.exists()

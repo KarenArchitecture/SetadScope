@@ -1669,3 +1669,24 @@
     transition: none;
   }
 }
+
+.collection-progress__resume {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 10px 16px;
+  margin: 12px 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, rgba(255, 255, 255, 0.12));
+  border-radius: 10px;
+}
+.collection-progress__resume p {
+  margin: 0;
+  font-size: 0.85rem;
+}
+.collection-progress__resume button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}

@@ -158,6 +158,9 @@ def initial_collection_state(
         "retry_at": None,
         "manual_retry_at": None,
         "retry_id": None,
+        "resumable": False,
+        "resume_page": None,
+        "resume_records_saved": 0,
         "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
         "started_at": None,
         "finished_at": None,
@@ -203,6 +206,9 @@ def initial_global_collection_state(
         "manual_retry_at": None,
         "retry_id": None,
         "retry_collection_group": None,
+        "current_resumable": False,
+        "current_resume_page": None,
+        "current_resume_records_saved": 0,
         "current_pages_completed": 0,
         "current_total_pages": None,
         "current_records_fetched": 0,
@@ -264,6 +270,9 @@ def update_collection_state(state_key: str, **values) -> dict:
                 "manual_retry_at": collection_state.get("manual_retry_at") if collection_state.get("phase") == "waiting_for_access" else None,
                 "retry_id": collection_state.get("retry_id") if collection_state.get("phase") == "waiting_for_access" else None,
                 "retry_collection_group": collection_state.get("collection_group") if collection_state.get("phase") == "waiting_for_access" else None,
+                "current_resumable": bool(collection_state.get("resumable")),
+                "current_resume_page": collection_state.get("resume_page"),
+                "current_resume_records_saved": collection_state.get("resume_records_saved", 0),
                 "current_message": collection_state.get("message", "در حال دریافت اطلاعات..."),
                 "current_pages_completed": collection_state.get("pages_completed", 0),
                 "current_total_pages": collection_state.get("total_pages"),
@@ -379,6 +388,9 @@ def run_collection_job(
                         retry_at=progress.get("retry_at"),
                         manual_retry_at=progress.get("manual_retry_at"),
                         retry_id=progress.get("retry_id"),
+                        resumable=bool(progress.get("resumable", False)),
+                        resume_page=progress.get("resume_page"),
+                        resume_records_saved=int(progress.get("resume_records_saved", 0) or 0),
                         message=progress.get("message", "در حال دریافت اطلاعات..."),
                         current_page=progress.get("current_page", 0),
                         total_pages=progress.get("total_pages"),
@@ -466,11 +478,19 @@ def run_collection_job(
             status="failed" if incomplete else "completed",
             phase="failed" if incomplete else "completed",
             message=(
-                f"{records_stored} رکورد ذخیره شد. دریافت صفحات بعدی با HTTP 428 متوقف شد."
+                (
+                    f"{records_stored} رکورد ذخیره شد. دریافت در صفحه "
+                    f"{fetch_state.get('resume_page')} متوقف شد؛ می‌توانی از همان نقطه ادامه بدهی."
+                    if fetch_state.get("resumable")
+                    else f"{records_stored} رکورد ذخیره شد؛ دریافت کامل نشد. علت: {reason}"
+                )
                 if incomplete else "جمع‌آوری و ذخیره‌سازی با موفقیت انجام شد."
             ),
             error=f"{reason}. {records_stored} رکورد پیش از توقف ذخیره شد." if incomplete else None,
             progress_percent=fetch_state["progress_percent"] if incomplete else 100,
+            resumable=bool(fetch_state.get("resumable")) if incomplete else False,
+            resume_page=fetch_state.get("resume_page") if incomplete else None,
+            resume_records_saved=int(fetch_state.get("resume_records_saved", 0) or 0) if incomplete else 0,
             **({
                 key: fetch_state[key]
                 for key in ("current_page", "total_pages", "pages_completed")
@@ -483,11 +503,19 @@ def run_collection_job(
             output=output,
         )
     except Exception as exc:
+        with collection_lock:
+            failed_state = dict(collection_states[state_key])
+        can_resume = bool(failed_state.get("resumable"))
+        resume_page = failed_state.get("resume_page")
         update_collection_state(
             state_key,
             status="failed",
             phase="failed",
-            message="اجرای جمع‌آوری با خطا مواجه شد.",
+            message=(
+                f"دریافت در صفحه {resume_page} متوقف شد؛ "
+                "صفحات قبلی ذخیره شده‌اند و می‌توانی از همان نقطه ادامه بدهی."
+                if can_resume else "اجرای جمع‌آوری با خطا مواجه شد."
+            ),
             error=str(exc)[-3000:],
             finished_at=datetime.now(timezone.utc).isoformat(),
             output="\n".join(output_lines)[-5000:],
