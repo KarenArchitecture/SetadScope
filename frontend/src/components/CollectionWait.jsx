@@ -3,7 +3,6 @@ import { Clock, RefreshCw } from "lucide-react";
 import { retryClearance } from "../services/api";
 import { notifyToast } from "../utils/toast";
 
-const format = new Intl.NumberFormat("fa-IR", { useGrouping: false });
 const two = new Intl.NumberFormat("fa-IR", { minimumIntegerDigits: 2, useGrouping: false });
 
 export default function CollectionWait({ state }) {
