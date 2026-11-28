@@ -102,6 +102,14 @@ export async function getCollectionStatus(
 }
 
 
+export async function retryClearance(retryId, collectionGroup) {
+  const response = await api.post("/api/collection/auctions/clearance/retry", null, {
+    params: { retry_id: retryId, collection_group: collectionGroup },
+  });
+  return response.data;
+}
+
+
 export async function startGlobalCollection() {
   const response = await api.post("/api/collection/global/run");
   return response.data;

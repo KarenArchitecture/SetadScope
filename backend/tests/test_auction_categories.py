@@ -454,27 +454,112 @@ def test_eauc_rejects_wrong_reported_page_to_prevent_missing_data(tmp_path, monk
     assert not list(root.glob("movable_run_*.json"))
 
 
-def test_clearance_428_preserves_partial_pages_without_retrying(tmp_path, capsys):
+@pytest.mark.parametrize("group", ["executive_agencies", "amval_tamliki"])
+def test_clearance_428_waits_then_retries_the_same_page(tmp_path, monkeypatch, group):
     from setad_scope.collectors import fetch_auction_categories as module
 
     requested = []
+    sleeps = []
+    events = []
+    blocked_page_two = {"first": True}
 
     class Session:
         def get(self, url, params, timeout):
             page = params["pageNumber"]
             requested.append(page)
             response = module.requests.Response()
-            response.status_code = 428 if page == 2 else 200
-            response._content = b'{"content":[{"cartId":1}],"totalPages":5,"totalElements":25}'
+            if page == 2 and blocked_page_two["first"]:
+                blocked_page_two["first"] = False
+                response.status_code = 428
+                response.headers["Retry-After"] = "2"
+                response._content = b'{"flag":true}'
+            else:
+                response.status_code = 200
+                response._content = json.dumps({
+                    "content": [{"cartId": page + 100, "orgId": 5315}],
+                    "totalPages": 5,
+                    "totalElements": 5,
+                }).encode("utf-8")
+            response.url = url
             return response
 
-    with pytest.raises(module.ClearancePreconditionError, match="HTTP 428"):
-        module.collect("clearance", delay=0, raw_dir=tmp_path, session=Session())
+    monkeypatch.delenv("SETADSCOPE_RETRY_SIGNAL", raising=False)
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(module, "emit_progress", lambda **values: events.append(values))
 
-    assert requested == [0, 1, 2]
-    assert not list(tmp_path.glob("clearance_run_*.json"))
-    manifest, = tmp_path.glob("clearance_partial_*.json")
-    assert f"PARTIAL_MANIFEST:{manifest.name}" in capsys.readouterr().out
-    result = json.loads(manifest.read_text(encoding="utf-8"))
-    assert result["complete_source"] is False
-    assert [page["page"] for page in result["pages"]] == [0, 1]
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Session(),
+        collection_group=group,
+        retry_initial_seconds=1,
+        retry_max_seconds=4,
+    )
+
+    assert requested == [0, 1, 2, 2, 3, 4]
+    assert sleeps == [2.0]
+    assert summary["complete_source"] is True
+    assert summary["rows_saved"] == 5
+    assert [item["page"] for item in summary["pages"]] == [0, 1, 2, 3, 4]
+    waiting = next(event for event in events if event["phase"] == "waiting_for_access")
+    assert waiting["retry_in_seconds"] == 2.0
+    assert waiting["retry_at"] > 0
+    assert waiting["manual_retry_at"] is None
+    assert waiting["retry_id"]
+    assert any(event["phase"] == "waiting_for_access" for event in events)
+
+
+@pytest.mark.parametrize("group", ["executive_agencies", "amval_tamliki"])
+def test_clearance_manual_retry_can_interrupt_wait_immediately(tmp_path, monkeypatch, group):
+    from setad_scope.collectors import fetch_auction_categories as module
+
+    requested = []
+    sleeps = []
+    events = []
+    signal_path = tmp_path / "retry-signal"
+
+    class Session:
+        def get(self, url, params, timeout):
+            page = params["pageNumber"]
+            requested.append(page)
+            response = module.requests.Response()
+            if len(requested) == 1:
+                response.status_code = 428
+                response._content = b'{"flag":true}'
+            else:
+                response.status_code = 200
+                response._content = json.dumps({
+                    "content": [{"cartId": page + 100, "orgId": 5315}],
+                    "totalPages": 2,
+                    "totalElements": 2,
+                }).encode("utf-8")
+            response.url = url
+            return response
+
+    def report_progress(**values):
+        events.append(values)
+        if values.get("phase") == "waiting_for_access":
+            signal_path.write_text(values["retry_id"], encoding="utf-8")
+
+    monkeypatch.setenv("SETADSCOPE_RETRY_SIGNAL", str(signal_path))
+    monkeypatch.setattr(module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(module, "emit_progress", report_progress)
+
+    summary = module.collect(
+        "clearance",
+        delay=0,
+        raw_dir=tmp_path,
+        session=Session(),
+        collection_group=group,
+        retry_initial_seconds=240,
+        retry_max_seconds=300,
+    )
+
+    waiting = next(event for event in events if event["phase"] == "waiting_for_access")
+    assert waiting["manual_retry_at"] is not None
+    assert waiting["retry_at"] > waiting["manual_retry_at"]
+    assert waiting["retry_id"]
+    assert requested == [0, 0, 1]
+    assert sleeps == []
+    assert summary["complete_source"] is True

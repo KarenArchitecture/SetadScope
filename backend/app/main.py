@@ -4,7 +4,9 @@ import json
 import os
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 from collections import deque
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -153,6 +155,9 @@ def initial_collection_state(
         "category": category,
         "status": "idle",
         "phase": "idle",
+        "retry_at": None,
+        "manual_retry_at": None,
+        "retry_id": None,
         "message": "هنوز جمع‌آوری جدیدی اجرا نشده است.",
         "started_at": None,
         "finished_at": None,
@@ -194,6 +199,10 @@ def initial_global_collection_state(
         "overall_progress_percent": 0,
         "current_phase": "idle",
         "current_message": "",
+        "retry_at": None,
+        "manual_retry_at": None,
+        "retry_id": None,
+        "retry_collection_group": None,
         "current_pages_completed": 0,
         "current_total_pages": None,
         "current_records_fetched": 0,
@@ -251,6 +260,10 @@ def update_collection_state(state_key: str, **values) -> dict:
                     (completed_sources + percent / 100) / total_sources * 100
                 ),
                 "current_phase": collection_state.get("phase", "collecting"),
+                "retry_at": collection_state.get("retry_at") if collection_state.get("phase") == "waiting_for_access" else None,
+                "manual_retry_at": collection_state.get("manual_retry_at") if collection_state.get("phase") == "waiting_for_access" else None,
+                "retry_id": collection_state.get("retry_id") if collection_state.get("phase") == "waiting_for_access" else None,
+                "retry_collection_group": collection_state.get("collection_group") if collection_state.get("phase") == "waiting_for_access" else None,
                 "current_message": collection_state.get("message", "در حال دریافت اطلاعات..."),
                 "current_pages_completed": collection_state.get("pages_completed", 0),
                 "current_total_pages": collection_state.get("total_pages"),
@@ -260,6 +273,7 @@ def update_collection_state(state_key: str, **values) -> dict:
 
 
 quick_processes = {}
+retry_signal_paths: dict[str, Path] = {}
 
 
 def check_stop(state_key):
@@ -298,6 +312,7 @@ def run_collection_job(
     update_collection_state(state_key, **initial)
 
     output_lines: deque[str] = deque(maxlen=100)
+    retry_signal_dir = None
     try:
         project_root = Path(__file__).resolve().parents[2]
         env = os.environ.copy()
@@ -317,6 +332,13 @@ def run_collection_job(
                 "--group", group, "--category", category,
                 "--start-page", "0", "--delay", "0.7",
             ]
+
+        if kind == "auctions" and category == "clearance":
+            retry_signal_dir = tempfile.TemporaryDirectory(prefix="setad-retry-")
+            signal_path = Path(retry_signal_dir.name) / "retry"
+            env["SETADSCOPE_RETRY_SIGNAL"] = str(signal_path)
+            with collection_lock:
+                retry_signal_paths[state_key] = signal_path
 
         process = subprocess.Popen(
             [sys.executable, "-u", "-m", module, *collector_args],
@@ -354,6 +376,9 @@ def run_collection_job(
                         state_key,
                         status="collecting",
                         phase=progress.get("phase", "collecting"),
+                        retry_at=progress.get("retry_at"),
+                        manual_retry_at=progress.get("manual_retry_at"),
+                        retry_id=progress.get("retry_id"),
                         message=progress.get("message", "در حال دریافت اطلاعات..."),
                         current_page=progress.get("current_page", 0),
                         total_pages=progress.get("total_pages"),
@@ -472,6 +497,10 @@ def run_collection_job(
         with collection_lock:
             if quick_processes.get(state_key) is locals().get("process"):
                 quick_processes.pop(state_key, None)
+            if retry_signal_dir is not None:
+                retry_signal_paths.pop(state_key, None)
+        if retry_signal_dir is not None:
+            retry_signal_dir.cleanup()
 
 def run_global_collection_job() -> None:
     run_collection_batch("global", GLOBAL_COLLECTION_SOURCES)
@@ -1122,6 +1151,32 @@ def start_auction_category_collection(
     response_state["last_updated_at"] = last_updated.isoformat() if last_updated else None
     background_tasks.add_task(run_collection_job, "auctions", group, category)
     return response_state
+
+
+@app.post("/api/collection/auctions/clearance/retry", status_code=202)
+def request_clearance_retry(
+    retry_id: str,
+    collection_group: Literal["executive_agencies", "amval_tamliki"] = "executive_agencies",
+):
+    """Request an immediate probe while an owner-specific clearance feed is waiting."""
+    state_key = collection_state_key(collection_group, "clearance")
+    with collection_lock:
+        state = collection_states[state_key]
+        signal = retry_signal_paths.get(state_key)
+        now = time.time()
+        if (
+            state.get("status") != "collecting"
+            or state.get("phase") != "waiting_for_access"
+            or state.get("retry_id") != retry_id
+            or not signal
+            or not (now < (state.get("retry_at") or 0))
+        ):
+            raise HTTPException(
+                status_code=409,
+                detail="این نوبت انتظار به پایان رسیده یا بررسی خودکار آغاز شده است.",
+            )
+        signal.write_text(retry_id, encoding="utf-8")
+        return {"accepted": True}
 
 
 @app.get("/api/collection/auctions/history")
