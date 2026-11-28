@@ -164,7 +164,7 @@ def project_auction(
         source_url = (
             "https://fe.setadiran.ir/centralboard/?tagCode=342&selectedOrganization=5315&boardCode=3"
             if group == "amval_tamliki"
-            else "https://fe.setadiran.ir/centralboard/?tagCode=341,343&boardCode=3"
+            else "https://fe.setadiran.ir/centralboard/?tagCode=341,343&notOrgId=5315&boardCode=3"
         )
     else:
         date_start = _date(auction, "fromProposalDate")

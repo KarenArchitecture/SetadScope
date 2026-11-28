@@ -66,7 +66,8 @@ def build_centralboard_clearance_source(collection_group: str) -> AuctionSource:
     )
     if collection_group == "executive_agencies":
         source = "setad_clearance_executive_agencies"
-        fixed_params = (("tagCode", "341,343"), *common_params)
+        # Match the executive-agency view in the Central Board UI: exclude Amval Tamliki (org 5315).
+        fixed_params = (("tagCode", "341,343"), ("notOrgId", "5315"), *common_params)
         expected_organization_id = None
     elif collection_group == "amval_tamliki":
         source = "setad_clearance_amval_tamliki"
