@@ -153,6 +153,8 @@ console.log("Collection timestamp checks passed: persistent history and Tehran-l
 const toastViewport = read("src/components/ToastViewport.jsx");
 const toastStyles = read("src/components/ToastViewport.css");
 const toastUtils = read("src/utils/toast.js");
+const retryWait = read("src/components/CollectionWait.jsx");
+const globalCollection = read("src/components/GlobalCollectionControl.jsx");
 assert.match(app, /<ToastViewport \/>/);
 assert.match(dashboard, /className="collection-action-card"/);
 assert.match(dashboard, /collection-action-card__last-updated/);
@@ -164,5 +166,10 @@ assert.match(toastViewport, /aria-live="polite"/);
 assert.match(toastViewport, /TOAST_ICONS/);
 assert.match(toastStyles, /app-toast-enter/);
 assert.match(toastUtils, /export function notifyToast/);
+assert.match(dashboard, /import CollectionWait from/);
+assert.match(dashboard, /<CollectionWait state={state} \/>/);
+assert.match(globalCollection, /<CollectionWait state={state} \/>/);
+assert.match(retryWait, /retryClearance\(retryId, collectionGroup\)/);
+assert.match(retryWait, /retryId && now < deadline/);
 
-console.log("Toast checks passed: request, success, error and accessible viewport.");
+console.log("Toast and clearance retry interaction checks passed.");
